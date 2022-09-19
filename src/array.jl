@@ -2,7 +2,7 @@
 # https://github.com/JuliaGPU/Metal.jl/blob/main/src/array.jl
 # Until I understand GPUArrays mechanics
 
-using WGPU_jll
+using WGPUNative
 using WGPU
 using LinearAlgebra
 using GPUArrays

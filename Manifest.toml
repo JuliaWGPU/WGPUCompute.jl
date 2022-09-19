@@ -2,7 +2,7 @@
 
 julia_version = "1.8.1"
 manifest_format = "2.0"
-project_hash = "cccf03001eb56ee04f6d1e4d036f7eb9b67474e9"
+project_hash = "d767f6200585d39841bced20e53124dff5e67e6d"
 
 [[deps.AbstractTrees]]
 git-tree-sha1 = "03e0550477d86222521d254b741d470ba17ea0b5"
@@ -358,11 +358,17 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 
 [[deps.WGPU]]
-deps = ["CEnum", "Eyeball", "GLFW", "Libdl", "ModernGL", "OhMyREPL", "Pkg", "Reexport", "Test", "WGPU_jll"]
-git-tree-sha1 = "3177f9262780bfd9ea0f515e75eb2e84554faa1d"
+deps = ["CEnum", "Eyeball", "GLFW", "Libdl", "ModernGL", "OhMyREPL", "Pkg", "Reexport", "Test", "WGPUNative"]
+git-tree-sha1 = "37ec3ba2115a91f64538323d6d40efcd52903669"
 repo-rev = "main"
 repo-url = "https://github.com/dhvijah/WGPU.jl"
 uuid = "53d714bf-0d76-4802-84b4-6cb75cca55f5"
+version = "0.1.1"
+
+[[deps.WGPUNative]]
+deps = ["CEnum", "Libdl", "Pkg", "Reexport"]
+git-tree-sha1 = "f95283fd0096787b7192f49c4a36fc07445426f9"
+uuid = "c14bfd16-04f9-4c2f-a915-b355584b5509"
 version = "0.1.1"
 
 [[deps.WGPU_jll]]
