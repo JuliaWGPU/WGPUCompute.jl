@@ -1,6 +1,8 @@
 # WGPUCompute.jl
 Array and kernel interface for WGPU
 
+WIP progress
+
 ```julia 
 
 using BenchmarkTools 
