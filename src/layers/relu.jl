@@ -11,15 +11,28 @@ abstract type ActivationLayer{T} <: AbstractLayer{T} end
 struct ReLULayer{T} <: ActivationLayer{T}
 end
 
+function compileShader(relu::ReLULayer{T}, x::AbstractArray{T}) where T
+	shaderSrc = getShaderCode(relu, x)
+	cShader = nothing
+	try
+		cShader = createShaderObj(getWgpuDevice(), shaderSrc; savefile = true)
+	catch(e)
+		@info e
+		rethrow(e)
+	end
+	task_local_storage((:relu, :shader, T, size(x)), cShader)
+	return cShader
+end
+
 function (relu::ReLULayer{T})(x::AbstractArray{T}) where T 
 	dims = size(x)
-	computeDict = get!(task_local_storage(), (:relu, size)) do
-		preparePipeline(relu, x)
-	end
-	computeDict = preparePipeline(relu, x)
+	# get!(task_local_storage(), (:relu, T, size(x))) do
+		# preparePipeline(relu, x)
+	# end
+	preparePipeline(relu, x)
 	compute(
-		computeDict[:pipeline],
-		computeDict[:bindGroup],
+		task_local_storage((:relu, :pipeline, T, size(x))),
+		task_local_storage((:relu, :bindgroup, T, size(x))),
 		relu,
 		x
 	)
@@ -90,31 +103,27 @@ end
 
 function preparePipeline(relu::ReLULayer{T}, x::AbstractArray) where T
 	gpuDevice = getWgpuDevice()
-	shaderSrc = getShaderCode(relu, x)
-	cShader = nothing
-	try
-		cShader = createShaderObj(gpuDevice, shaderSrc; savefile = true)
-	catch(e)
-		@info e
-		rethrow(e)
+	cShader = get!(task_local_storage(), (:relu, :shader, T, size(x))) do
+		compileShader(relu, x)
 	end
-	# task_local_storage((:relu, :shader, size(x)...), cShader)
 	bindingLayouts = []
 	bindings = []
 	append!(bindingLayouts, getBindingLayouts(relu; binding=0))
 	append!(bindings, getBindings(relu, x; binding=0))
-	(bindGroupLayouts, bindGroup) = WGPU.makeBindGroupAndLayout(gpuDevice, bindingLayouts, bindings)
+	(bindGroupLayouts, bindGroup) = WGPU.makeBindGroupAndLayout(
+		gpuDevice, 
+		bindingLayouts, 
+		bindings
+	)
 	pipelineLayout = WGPU.createPipelineLayout(gpuDevice, "PipeLineLayout", bindGroupLayouts)
 	computeStage = WGPU.createComputeStage(cShader.internal[], "main")
 	computePipeline = WGPU.createComputePipeline(gpuDevice, "computePipeline", pipelineLayout, computeStage)
-	# task_local_storage((:relu, :pipeline, size(x)...), computePipeline)
-	# commandEncoder = WGPU.createCommandEncoder(gpuDevice, "Command Encoder")
-	Dict(
-		:pipeline => computePipeline,
-		:bindGroup => bindGroup,
-		:computeStage => computeStage,
-		:shader => cShader
-	)
+	task_local_storage((:relu, :bindingLayouts, T, size(x)), bindingLayouts)
+	task_local_storage((:relu, :bindings, T, size(x)), bindings)
+	task_local_storage((:relu, :layout, T, size(x)), pipelineLayout)
+	task_local_storage((:relu, :pipeline, T, size(x)), computePipeline)
+	task_local_storage((:relu, :bindgroup, T, size(x)), bindGroup)
+	task_local_storage((:relu, :computestage, T, size(x)), computeStage)
 end
 
 
@@ -129,7 +138,7 @@ function compute(computePipeline, bindGroup, relu::ReLULayer, x)
 	computePass = WGPU.beginComputePass(commandEncoder)
 	WGPU.setPipeline(computePass, computePipeline)
 	WGPU.setBindGroup(computePass, 0, bindGroup, UInt32[], 0, 99999)
-	WGPU.dispatchWorkGroups(computePass, 256, 1, 1)
+	WGPU.dispatchWorkGroups(computePass, size(x)...)
 	WGPU.endComputePass(computePass)
 	WGPU.submit(gpuDevice.queue, [WGPU.finish(commandEncoder),])
 end
