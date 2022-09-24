@@ -1,7 +1,7 @@
 export @wgpu
 
 """
-    @metal [kwargs...] func(args...)
+    @wgpu [kwargs...] func(args...)
 
 High-level interface for executing code on a GPU. The `@metal` macro should prefix a call,
 with `func` a callable function or object that should return nothing. It will be compiled to

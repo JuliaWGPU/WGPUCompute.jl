@@ -170,9 +170,8 @@ mutable struct WgpuArray{T, N} <: AbstractGPUArray{T, N}
 	
 end
 
-
-
-
+Base.eltype(::Type{WgpuArray{T}}) where T = T
+Base.eltype(::Type{WgpuArray{T, N}}) where {T, N} = T
 
 # constructors (borrowed from WgpuArray for quick prototyping)
 WgpuArray{T, N}(::UndefInitializer, dims::Integer...) where {T, N} = 
