@@ -7,10 +7,18 @@ using StaticArrays
 abstract type AbstractLayer{T} end 
 abstract type ActivationLayer{T} <: AbstractLayer{T} end
 
+# list of elementwise functions
+elementFuncs = [
+	"ReLU",
+	"ELU",
+	""
+]
+
 
 struct ReLULayer{T} <: ActivationLayer{T}
 end
 
+# TODO compileShader only needs size of x
 function compileShader(relu::ReLULayer{T}, x::AbstractArray{T}) where T
 	shaderSrc = getShaderCode(relu, x)
 	cShader = nothing
@@ -20,6 +28,7 @@ function compileShader(relu::ReLULayer{T}, x::AbstractArray{T}) where T
 		@info e
 		rethrow(e)
 	end
+	@info cShader.src
 	task_local_storage((:relu, :shader, T, size(x)), cShader)
 	return cShader
 end
@@ -29,14 +38,10 @@ function (relu::ReLULayer{T})(x::AbstractArray{T}) where T
 	# get!(task_local_storage(), (:relu, T, size(x))) do
 		# preparePipeline(relu, x)
 	# end
-	preparePipeline(relu, x)
-	compute(
-		task_local_storage((:relu, :pipeline, T, size(x))),
-		task_local_storage((:relu, :bindgroup, T, size(x))),
-		relu,
-		x
-	)
-	return x
+	y = similar(x)
+	preparePipeline(relu, x, y)
+	compute(relu, x)
+	return y
 end
 
 
@@ -57,7 +62,7 @@ function getShaderCode(activation::ReLULayer{T}, x::AbstractArray{T}) where T
 		@var StorageReadWrite 0 0 input0::IOArray
 		@var StorageReadWrite 0 1 output0::IOArray
 
-		@compute @workgroupSize($(size(x)...)) function main(@builtin global_invocation_id => global_id::Vec3{UInt32})
+		@compute @workgroupSize(8, 8, 4) function main(@builtin global_invocation_id => global_id::Vec3{UInt32})
 			@let gIdx = global_id.x*global_id.y + global_id.z;
 			@let value = input0.data[gIdx]
 			output0.data[gIdx] = max(value, $(zero(eltype(activation))))
@@ -83,7 +88,7 @@ function getBindingLayouts(relu::ReLULayer; binding=0)
 end
 
 
-function getBindings(relu::ReLULayer, x; binding=0)
+function getBindings(relu::ReLULayer, x, y; binding=0)
 	bindings = [
 		WGPU.GPUBuffer => [
 			:binding => binding,
@@ -93,15 +98,15 @@ function getBindings(relu::ReLULayer, x; binding=0)
 		],
 		WGPU.GPUBuffer => [
 			:binding => binding + 1,
-			:buffer => x.storageBuffer,
+			:buffer => y.storageBuffer,
 			:offset => 0,
-			:size => reduce(*, (x |> size)) * sizeof(eltype(x))
+			:size => reduce(*, (y |> size)) * sizeof(eltype(x))
 		],
 	]
 end
 
 
-function preparePipeline(relu::ReLULayer{T}, x::AbstractArray) where T
+function preparePipeline(relu::ReLULayer{T}, x::AbstractArray{T}, y::AbstractArray{T}) where T
 	gpuDevice = getWgpuDevice()
 	cShader = get!(task_local_storage(), (:relu, :shader, T, size(x))) do
 		compileShader(relu, x)
@@ -109,7 +114,7 @@ function preparePipeline(relu::ReLULayer{T}, x::AbstractArray) where T
 	bindingLayouts = []
 	bindings = []
 	append!(bindingLayouts, getBindingLayouts(relu; binding=0))
-	append!(bindings, getBindings(relu, x; binding=0))
+	append!(bindings, getBindings(relu, x, y; binding=0))
 	(bindGroupLayouts, bindGroup) = WGPU.makeBindGroupAndLayout(
 		gpuDevice, 
 		bindingLayouts, 
@@ -118,12 +123,13 @@ function preparePipeline(relu::ReLULayer{T}, x::AbstractArray) where T
 	pipelineLayout = WGPU.createPipelineLayout(gpuDevice, "PipeLineLayout", bindGroupLayouts)
 	computeStage = WGPU.createComputeStage(cShader.internal[], "main")
 	computePipeline = WGPU.createComputePipeline(gpuDevice, "computePipeline", pipelineLayout, computeStage)
-	task_local_storage((:relu, :bindingLayouts, T, size(x)), bindingLayouts)
-	task_local_storage((:relu, :bindings, T, size(x)), bindings)
-	task_local_storage((:relu, :layout, T, size(x)), pipelineLayout)
+	# task_local_storage((:relu, :bindgrouplayout, T, size(x)), bindGroupLayouts)
+	# task_local_storage((:relu, :bindings, T, size(x)), bindings)
+	# task_local_storage((:relu, :bindinglayouts, T, size(x)), bindingLayouts)
+	# task_local_storage((:relu, :layout, T, size(x)), pipelineLayout)
 	task_local_storage((:relu, :pipeline, T, size(x)), computePipeline)
 	task_local_storage((:relu, :bindgroup, T, size(x)), bindGroup)
-	task_local_storage((:relu, :computestage, T, size(x)), computeStage)
+	# task_local_storage((:relu, :computestage, T, size(x)), computeStage)
 end
 
 
@@ -132,13 +138,13 @@ function gpu_call(gpuDevice, relu::ReLULayer)
 end
 
 
-function compute(computePipeline, bindGroup, relu::ReLULayer, x)
+function compute(relu::ReLULayer{T}, x::AbstractArray{T}) where T
 	gpuDevice = getWgpuDevice()
 	commandEncoder = WGPU.createCommandEncoder(gpuDevice, "Command Encoder")
 	computePass = WGPU.beginComputePass(commandEncoder)
-	WGPU.setPipeline(computePass, computePipeline)
-	WGPU.setBindGroup(computePass, 0, bindGroup, UInt32[], 0, 99999)
-	WGPU.dispatchWorkGroups(computePass, size(x)...)
+	WGPU.setPipeline(computePass, task_local_storage((:relu, :pipeline, T, size(x))))
+	WGPU.setBindGroup(computePass, 0, task_local_storage((:relu, :bindgroup, T, size(x))), UInt32[], 0, 99999)
+	WGPU.dispatchWorkGroups(computePass, 1, 1, 1)
 	WGPU.endComputePass(computePass)
 	WGPU.submit(gpuDevice.queue, [WGPU.finish(commandEncoder),])
 end
