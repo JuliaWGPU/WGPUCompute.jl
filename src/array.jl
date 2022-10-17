@@ -3,7 +3,7 @@
 # Until I understand GPUArrays mechanics
 
 using WGPUNative
-using WGPU
+using WGPUCore
 using LinearAlgebra
 using GPUArrays
 using Adapt
@@ -14,14 +14,14 @@ export WgpuArray
 
 function getCurrentDevice()
 	get!(task_local_storage(), :WGPUDevice) do
-		WGPU.getDefaultDevice()
+		WGPUCore.getDefaultDevice()
 	end
 end
 
 struct WgpuArrayPtr{T}
-	buffer::WGPU.GPUBuffer
+	buffer::WGPUCore.GPUBuffer
 	offset::UInt
-	function WgpuArrayPtr{T}(buffer::WGPU.GPUBuffer, offset=0) where {T}
+	function WgpuArrayPtr{T}(buffer::WGPUCore.GPUBuffer, offset=0) where {T}
 		new(buffer, offset)
 	end
 end
@@ -35,15 +35,15 @@ Base.:(+)(x::Integer, y::WgpuArrayPtr{T}) where {T} = WgpuArrayPtr{T}(x.buffer, 
 Base.:(-)(x::Integer, y::WgpuArrayPtr{T}) where {T} = WgpuArrayPtr{T}(x.buffer, y.offset - x)
 
 contents(ptr::WgpuArrayPtr{T}) where T = convert(Ptr{T}, contents(ptr.buffer) |> pointer) + ptr.offset
-contents(buf::WGPU.GPUBuffer) = WGPU.mapRead(buf)
+contents(buf::WGPUCore.GPUBuffer) = WGPUCore.mapRead(buf)
 
 # following functions deviate WGPU api but not a concern since use case is different
 # and if we are taking LLVM approach this should not matter
 
 # GPU -> GPU
 function Base.unsafe_copyto!(gpuDevice, dst::WgpuArrayPtr{T}, src::WgpuArrayPtr{T}, N::Integer) where T
-	cmdEncoder = WGPU.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
-	WGPU.copyBufferToBuffer(
+	cmdEncoder = WGPUCore.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
+	WGPUCore.copyBufferToBuffer(
 		cmdEncoder,
 		src.buffer,
 		src.offset |> Int,
@@ -51,14 +51,14 @@ function Base.unsafe_copyto!(gpuDevice, dst::WgpuArrayPtr{T}, src::WgpuArrayPtr{
 		dst.offset |> Int,
 		N*sizeof(T)
 	)
-	WGPU.submit(gpuDevice.queue, [WGPU.finish(cmdEncoder),])
+	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(cmdEncoder),])
 end
 
 # GPU -> CPU
 function Base.unsafe_copyto!(gpuDevice, dst::Ptr{T}, src::WgpuArrayPtr{T}, N::Integer) where T
-	cmdEncoder = WGPU.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
-	# TODO we could simply readBuffer from WGPU.jl ?
-	tmpBuffer = WGPU.createBuffer(
+	cmdEncoder = WGPUCore.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
+	# TODO we could simply readBuffer from WGPUCore.jl ?
+	tmpBuffer = WGPUCore.createBuffer(
 		" READ BUFFER TEMP ",
 		gpuDevice,
 		sizeof(T)*N,
@@ -67,16 +67,16 @@ function Base.unsafe_copyto!(gpuDevice, dst::Ptr{T}, src::WgpuArrayPtr{T}, N::In
 	)
 	tmpWgpuArrayPtr = WgpuArrayPtr{T}(tmpBuffer, 0)
 	Base.unsafe_copyto!(gpuDevice, tmpWgpuArrayPtr, src, N)
-	WGPU.submit(gpuDevice.queue, [WGPU.finish(cmdEncoder),])
+	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(cmdEncoder),])
 	unsafe_copyto!(dst, contents(tmpWgpuArrayPtr), N)
-	WGPU.destroy(tmpBuffer)
+	WGPUCore.destroy(tmpBuffer)
 end
 
 # CPU -> GPU
 function Base.unsafe_copyto!(gpuDevice, dst::WgpuArrayPtr{T}, src::Ptr{T}, N::Integer) where T
-	cmdEncoder = WGPU.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
-	# TODO we could simply readBuffer from WGPU.jl ?
-	# tmpBuffer = WGPU.createBuffer(
+	cmdEncoder = WGPUCore.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
+	# TODO we could simply readBuffer from WGPUCore.jl ?
+	# tmpBuffer = WGPUCore.createBuffer(
 		# " READ BUFFER TEMP ",
 		# gpuDevice,
 		# N*sizeof(T),
@@ -84,14 +84,14 @@ function Base.unsafe_copyto!(gpuDevice, dst::WgpuArrayPtr{T}, src::Ptr{T}, N::In
 		# false
 	# )
 	# Base.unsafe_copyto!(gpuDevice, tmpBuffer, src.buffer, N)
-	# WGPU.submit(gpuDevice.queue, [WGPU.finish(cmdEncoder),])
-	# unsafe_copy!(dst, WGPU.mapRead(tmpBuffer))
-	WGPU.writeBuffer(gpuDevice.queue, dst.buffer, src)
+	# WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(cmdEncoder),])
+	# unsafe_copy!(dst, WGPUCore.mapRead(tmpBuffer))
+	WGPUCore.writeBuffer(gpuDevice.queue, dst.buffer, src)
 end
 
 function unsafe_fill!(gpuDevice, dst::WgpuArrayPtr{T}, value::Union{UInt8, Int8}, N::Integer) where T
-	cmdEncoder = WGPU.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
-	WGPU.writeBuffer(gpuDevice.queue, dst.buffer, fill(value, N))
+	cmdEncoder = WGPUCore.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
+	WGPUCore.writeBuffer(gpuDevice.queue, dst.buffer, fill(value, N))
 end
 
 
@@ -100,7 +100,7 @@ mutable struct WgpuArray{T, N} <: AbstractGPUArray{T, N}
 	storageData::Union{Vector{T}, Array{T}}
 	maxSize::Int
 	offset::Int
-	storageBuffer::WGPU.GPUBuffer
+	storageBuffer::WGPUCore.GPUBuffer
 	bindGroup::Union{Nothing, Int}
 	computePipeline::Any # Dict ?
 	# offset
@@ -109,7 +109,7 @@ mutable struct WgpuArray{T, N} <: AbstractGPUArray{T, N}
 	function WgpuArray{T, N}(data::Union{Vector, Array{T, N}}) where {T, N}
 		device = getCurrentDevice()
 		storageData = data[:]
-		(storageBuffer, _) = WGPU.createBufferWithData(
+		(storageBuffer, _) = WGPUCore.createBufferWithData(
 			device,
 			"WgpuArray Buffer",
 			storageData,
@@ -144,7 +144,7 @@ mutable struct WgpuArray{T, N} <: AbstractGPUArray{T, N}
 		
 		if bufsize > 0
 			storageData = Array{T}(undef, prod(dims))
-			(storageBuffer, _) = WGPU.createBufferWithData(
+			(storageBuffer, _) = WGPUCore.createBufferWithData(
 				dev,
 				"WgpuArray Buffer",
 				storageData,
@@ -247,7 +247,7 @@ Base.convert(::Type{T}, x::T) where T <: WgpuArray = x
 Base.unsafe_convert(::Type{<:Ptr}, x::WgpuArray) =
   throw(ArgumentError("cannot take the host address of a $(typeof(x))"))
 
-Base.unsafe_convert(t::Type{WGPU.GPUBuffer}, x::WgpuArray) = x.buffer
+Base.unsafe_convert(t::Type{WGPUCore.GPUBuffer}, x::WgpuArray) = x.buffer
 
 
 ## interop with CPU arrays
@@ -394,14 +394,14 @@ end
 
 # pointer conversions
 ## contiguous
-function Base.unsafe_convert(::Type{WGPU.GPUBuffer}, V::SubArray{T,N,P,<:Tuple{Vararg{Base.RangeIndex}}}) where {T,N,P}
-    return Base.unsafe_convert(WGPU.GPUBuffer, parent(V)) +
+function Base.unsafe_convert(::Type{WGPUCore.GPUBuffer}, V::SubArray{T,N,P,<:Tuple{Vararg{Base.RangeIndex}}}) where {T,N,P}
+    return Base.unsafe_convert(WGPUCore.GPUBuffer, parent(V)) +
            Base._memory_offset(V.parent, map(first, V.indices)...)
 end
 
 ## reshaped
-function Base.unsafe_convert(::Type{WGPU.GPUBuffer}, V::SubArray{T,N,P,<:Tuple{Vararg{Union{Base.RangeIndex,Base.ReshapedUnitRange}}}}) where {T,N,P}
-   return Base.unsafe_convert(WGPU.GPUBuffer, parent(V)) +
+function Base.unsafe_convert(::Type{WGPUCore.GPUBuffer}, V::SubArray{T,N,P,<:Tuple{Vararg{Union{Base.RangeIndex,Base.ReshapedUnitRange}}}}) where {T,N,P}
+   return Base.unsafe_convert(WGPUCore.GPUBuffer, parent(V)) +
           (Base.first_index(V)-1)*sizeof(T)
 end
 
@@ -410,8 +410,8 @@ end
 
 device(a::Base.PermutedDimsArray) = device(parent(a))
 
-Base.unsafe_convert(::Type{WGPU.GPUBuffer}, A::PermutedDimsArray) where {T} =
-    Base.unsafe_convert(WGPU.GPUBuffer, parent(A))
+Base.unsafe_convert(::Type{WGPUCore.GPUBuffer}, A::PermutedDimsArray) where {T} =
+    Base.unsafe_convert(WGPUCore.GPUBuffer, parent(A))
 
 
 ## reshape
@@ -439,13 +439,13 @@ end
 
 device(a::Base.ReinterpretArray) = device(parent(a))
 
-Base.unsafe_convert(::Type{WGPU.GPUBuffer}, a::Base.ReinterpretArray{T,N,S} where N) where {T,S} =
-  WGPU.GPUBuffer(Base.unsafe_convert(ZePtr{S}, parent(a)))
+Base.unsafe_convert(::Type{WGPUCore.GPUBuffer}, a::Base.ReinterpretArray{T,N,S} where N) where {T,S} =
+  WGPUCore.GPUBuffer(Base.unsafe_convert(ZePtr{S}, parent(a)))
 
 
 ## unsafe_wrap
 
-function Base.unsafe_wrap(t::Type{<:Array{T}}, buf::WGPU.GPUBuffer, dims; own=false) where T
+function Base.unsafe_wrap(t::Type{<:Array{T}}, buf::WGPUCore.GPUBuffer, dims; own=false) where T
     ptr = convert(Ptr{T}, contents(buf))
     return unsafe_wrap(t, ptr, dims; own)
 end

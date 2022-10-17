@@ -9,7 +9,7 @@ abstract type AbstractLayer{T} end
 
 function getWgpuDevice()
 	get!(task_local_storage(), :WGPUDevice) do
-		WGPU.getDefaultDevice()
+		WGPUCore.getDefaultDevice()
 	end
 end
 

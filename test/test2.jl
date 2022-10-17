@@ -1,8 +1,9 @@
 using BenchmarkTools
 using WGPUCompute
 using Debugger
-using WGPU
-WGPU.SetLogLevel(WGPU.WGPULogLevel_Off)
+using WGPUCore
+
+WGPUCore.SetLogLevel(WGPUCore.WGPULogLevel_Off)
 
 using WGSLTypes
 

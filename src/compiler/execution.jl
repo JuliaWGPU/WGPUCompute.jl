@@ -81,13 +81,13 @@ end
 ## argument conversion
 
 struct Adaptor
-    cce::Union{Nothing, WGPU.GPUCommandEncoder}
+    cce::Union{Nothing, WGPUCore.GPUCommandEncoder}
 end
 
 # convert Metal buffers to their GPU address
-function Adapt.adapt_storage(to::Adaptor, buf::WGPU.GPUBuffer)
+function Adapt.adapt_storage(to::Adaptor, buf::WGPUCore.GPUBuffer)
     if to.cce !== nothing && buf.handle != C_NULL
-        WGPU.use!(to.cce, buf, WGPU.ReadWriteUsage)
+        WGPUCore.use!(to.cce, buf, WGPUCore.ReadWriteUsage)
     end
     reinterpret(Core.LLVMPtr{Nothing,AS.Device}, buf.gpuAddress)
 end
@@ -126,7 +126,7 @@ wgpuconvert(arg, cce=nothing) = adapt(Adaptor(cce), arg)
 struct HostKernel{F,TT}
     f::F
     fun::Function
-    pipeline_state::WGPU.GPUComputePipeline
+    pipeline_state::WGPUCore.GPUComputePipeline
 end
 
 """
@@ -210,7 +210,7 @@ function (kernel::HostKernel)(args...; grid::WgpuDim=1, threads::WgpuDim=1)
     cmdbuf.label = "WgpuCommandBuffer($(nameof(kernel.f)))"
     argument_buffers = WgpuBuffer[]
     WgpuComputeCommandEncoder(cmdbuf) do cce
-        WGPU.set_function!(cce, kernel.pipeline_state)
+        WGPUCore.set_function!(cce, kernel.pipeline_state)
 
         # encode arguments
         idx = 1
@@ -239,7 +239,7 @@ function (kernel::HostKernel)(args...; grid::WgpuDim=1, threads::WgpuDim=1)
             idx += 1
         end
 
-        WGPU.append_current_function!(cce, grid, threads)
+        WGPUCore.append_current_function!(cce, grid, threads)
     end
 
     # the command buffer retains resources that are explicitly encoded (i.e. direct buffer
@@ -251,7 +251,7 @@ function (kernel::HostKernel)(args...; grid::WgpuDim=1, threads::WgpuDim=1)
     #
     # TODO: is there a way to bind additional resources to the command buffer?
     roots = [kernel.f, args]
-    WGPU.on_completed(cmdbuf) do
+    WGPUCore.on_completed(cmdbuf) do
         empty!(roots)
         foreach(free, argument_buffers)
 
