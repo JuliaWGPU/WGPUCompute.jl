@@ -33,8 +33,8 @@ jobs:
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v1
       - run : sudo apt-get update && sudo apt-get install -y xorg-dev mesa-utils xvfb libgl1 freeglut3-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev
-      - run : DISPLAY=:0 xvfb-run -s '-screen 0 1024x768x24' julia --color=yes --project=compute -e 'using Pkg; pkg"dev . WGPUNative WGPUCore"'
-      - run : DISPLAY=:0 xvfb-run -s '-screen 0 1024x768x24' julia --color=yes --project=compute -e 'using Pkg; Pkg.test("WGPUCompute", coverage=true)'
+      - run : DISPLAY=:0 xvfb-run -s '-screen 0 1024x768x24' julia --color=yes --project=wgpucompute -e 'using Pkg; pkg"dev . WGPUNative WGPUCore"'
+      - run : DISPLAY=:0 xvfb-run -s '-screen 0 1024x768x24' julia --color=yes --project=wgpucompute -e 'using Pkg; Pkg.test("WGPUCompute", coverage=true)'
       - uses: julia-actions/julia-processcoverage@v1
       - uses: codecov/codecov-action@v2
         with:
@@ -57,10 +57,12 @@ jobs:
             prefix: xvfb-run
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - run: >
-	  DISPLAY=:0 xvfb-run -s '-screen 0 1024x768x24' 
+      - name: Generating Docs
+        run: >
+          DISPLAY=:0 xvfb-run -s '-screen 0 1024x768x24' 
           julia --project=docs -e '
             using Documenter: DocMeta, doctest
             using WGPUCompute
             DocMeta.setdocmeta!(WGPUCompute, :DocTestSetup, :(using WGPUCompute); recursive=true)
-            doctest(WGPUCompute)'
+            doctest(WGPUCompute)
+        '
