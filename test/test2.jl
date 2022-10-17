@@ -7,12 +7,13 @@ WGPUCore.SetLogLevel(WGPUCore.WGPULogLevel_Off)
 
 using WGSLTypes
 
-x = WgpuArray{Float32}(undef, (8, 8, 4))
-y = WgpuArray(rand(8, 8, 4) .- 0.5 .|> Float32)
+x = WgpuArray{Float32}(undef, (256, 256, 256))
+y = WgpuArray(rand(256, 256, 64) .- 0.5 .|> Float32)
 
 relu = ReLULayer{Float32}()
 relu(y)
 relu(x)
 
-@benchmark z = relu(y)
+@btime relu(y)
 
+@benchmark relu(y)
