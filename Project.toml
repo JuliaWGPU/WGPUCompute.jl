@@ -1,5 +1,5 @@
 name = "WGPUCompute"
-uuid = "6429ed49-3aaf-43c1-89de-d56274006a8c"
+uuid = "494b1f74-06dd-4437-8477-4a86f2a8d703"
 authors = ["arhik <arhik23@gmail.com>"]
 version = "0.1.0"
 
@@ -14,8 +14,16 @@ Lazy = "50d2b5c4-7a5e-59d5-8109-a42b560f39c0"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 MacroTools = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
 Reexport = "189a3867-3050-52da-a836-e630ba90ab69"
-SPIRV_LLVM_Translator_jll = "4a5d46fc-d8cf-5151-a261-86b458210efb"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 WGPU = "53d714bf-0d76-4802-84b4-6cb75cca55f5"
 WGPUNative = "c14bfd16-04f9-4c2f-a915-b355584b5509"
 WGSLTypes = "8cf5275a-6167-4820-ac24-74d7d0e6cf05"
+
+[compat]
+julia = "1.8"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

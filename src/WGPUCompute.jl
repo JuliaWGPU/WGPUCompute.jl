@@ -1,10 +1,9 @@
 module WGPUCompute
 
-using WGPU
+using WGPUCore
 using WGPUNative
 using GPUArrays
 using GPUCompiler
-using SPIRV_LLVM_Translator_jll
 using ExprTools
 using LLVM
 using Adapt

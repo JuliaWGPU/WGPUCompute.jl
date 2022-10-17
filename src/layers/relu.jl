@@ -14,7 +14,6 @@ elementFuncs = [
 	""
 ]
 
-
 struct ReLULayer{T} <: ActivationLayer{T}
 end
 
