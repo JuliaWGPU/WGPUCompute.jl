@@ -65,4 +65,4 @@ jobs:
             using WGPUCompute
             DocMeta.setdocmeta!(WGPUCompute, :DocTestSetup, :(using WGPUCompute); recursive=true)
             doctest(WGPUCompute)
-        '
+          '
