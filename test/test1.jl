@@ -1,7 +1,9 @@
 using BenchmarkTools
 using WGPUCompute
 using Debugger
-using WGPU
+
+using WGPUCore
+
 WGPUCore.SetLogLevel(WGPUCore.WGPULogLevel_Debug)
 
 aArray = WgpuArray{Float32}(undef, (1024, 1024, 100))

@@ -15,7 +15,7 @@ LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 MacroTools = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
 Reexport = "189a3867-3050-52da-a836-e630ba90ab69"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
-WGPU = "53d714bf-0d76-4802-84b4-6cb75cca55f5"
+WGPUCore = "53d714bf-0d76-4802-84b4-6cb75cca55f5"
 WGPUNative = "c14bfd16-04f9-4c2f-a915-b355584b5509"
 WGSLTypes = "8cf5275a-6167-4820-ac24-74d7d0e6cf05"
 
