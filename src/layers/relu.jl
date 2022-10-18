@@ -11,7 +11,6 @@ abstract type ActivationLayer{T} <: AbstractLayer{T} end
 elementFuncs = [
 	"ReLU",
 	"ELU",
-	""
 ]
 
 struct ReLULayer{T} <: ActivationLayer{T}
