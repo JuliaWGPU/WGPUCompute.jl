@@ -3,7 +3,6 @@ using WGPUCore
 using LinearAlgebra
 using StaticArrays
 
-
 abstract type AbstractLayer{T} end 
 abstract type ActivationLayer{T} <: AbstractLayer{T} end
 
@@ -48,24 +47,23 @@ function getShaderCode(activation::ReLULayer{T}, x::AbstractArray{T}) where T
 		struct IOArray
 			data::WArray{$T}
 		end
-
+		
 		struct IOArrayVector
 			data::WArray{Vec4{$T}}
 		end
-
+		
 		struct IOArrayMatrix
 			data::WArray{Mat4{$T}}
 		end
-
+		
 		@var StorageReadWrite 0 0 input0::IOArray
 		@var StorageReadWrite 0 1 output0::IOArray
-
+		
 		@compute @workgroupSize(8, 8, 4) function main(@builtin global_invocation_id => global_id::Vec3{UInt32})
 			@let gIdx = global_id.x*global_id.y + global_id.z;
 			@let value = input0.data[gIdx]
 			output0.data[gIdx] = max(value, $(zero(eltype(activation))))
 		end
-		
 	end
 end
 
@@ -146,4 +144,5 @@ function compute(relu::ReLULayer{T}, x::AbstractArray{T}) where T
 	WGPUCore.endComputePass(computePass)
 	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(commandEncoder),])
 end
+
 

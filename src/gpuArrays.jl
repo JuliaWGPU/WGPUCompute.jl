@@ -15,9 +15,7 @@ struct WgpuArrayBackend <: AbstractGPUBackend end
 struct WgpuKernelContext <: AbstractKernelContext end
 
 
-@inline function GPUArrays.launch_heuristic(
-		
-)
+@inline function GPUArrays.launch_heuristic()
 
 end
 
@@ -25,7 +23,7 @@ function GPUArrays.gpu_call(::WgpuArrayBackend, f, args, threads::Int, blocks::I
 	@wgpu threads=threads grid=blocks name=name f(WgpuKernelContext(), args...)
 end
 
-GPUArrays.blockidx()
+# GPUArrays.blockidx()
 
 GPUArrays.backend(::Type{<:WgpuArray}) = WgpuArrayBackend()
 

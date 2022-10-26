@@ -1,4 +1,4 @@
-export @wgpu
+export @wgpu, wgpu
 
 """
     @wgpu [kwargs...] func(args...)
@@ -14,250 +14,325 @@ There is one supported keyword argument that influences the behavior of `@metal`
   kernel object should be launched by calling it and passing arguments again.
 """
 
-macro wgpu(ex...)
-    call = ex[end]
-    kwargs = ex[1:end-1]
+using MacroTools
+using Revise
+using CodeTracking
 
-    # destructure the kernel call
-    Meta.isexpr(call, :call) || throw(ArgumentError("second argument to @metal should be a function call"))
-    f = call.args[1]
-    args = call.args[2:end]
+# TODO remove
+using WGPUCompute
 
-    code = quote end
-    vars, var_exprs = assign_args!(code, args)
+# x = WgpuArray(rand(10, 10, 3) .|> Float32);
 
-    # group keyword argument
-    macro_kwargs, compiler_kwargs, call_kwargs, other_kwargs =
-        split_kwargs(kwargs, [:launch], [:name], [:grid, :threads])
-    if !isempty(other_kwargs)
-        key,val = first(other_kwargs).args
-        throw(ArgumentError("Unsupported keyword argument $key"))
+function wgpu(f, x)
+	T = eltype(x)
+	expr = @code_expr(f(x))
+	@capture(expr, function fdecl__ end) || error("Couldnt capture function")
+	@capture(fdecl[1], fname_(fargs__) where Targs_) || error("Couldnt function signature")  
+
+	originArgs = fargs[:]
+
+	builtinArgs = [:(@builtin global_invocation_id => global_id::Vec3{UInt32})]
+
+    code = quote 
+		struct IOArray
+			data::WArray{$T}
+		end
+		
+		struct IOArrayVector
+			data::WArray{Vec4{$T}}
+		end
+		
+		struct IOArrayMatrix
+			data::WArray{Mat4{$T}}
+		end
+		
+		@var StorageReadWrite 0 0 input0::IOArray
+		@var StorageReadWrite 0 1 output0::IOArray
     end
 
-    # handle keyword arguments that influence the macros behavior
-    launch = true
-    for kwarg in macro_kwargs
-        key,val = kwarg.args
-        if key === :launch
-            isa(val, Bool) || throw(ArgumentError("`launch` keyword argument to @metal should be a Bool"))
-            launch = val::Bool
-        else
-            throw(ArgumentError("Unsupported keyword argument $key"))
-        end
-    end
-    if !launch && !isempty(call_kwargs)
-        error("@wgpu with launch=false does not support launch-time keyword arguments; use them when calling the kernel")
-    end
-
-    # FIXME: macro hygiene wrt. escaping kwarg values (this broke with 1.5)
-    #        we esc() the whole thing now, necessitating gensyms...
-    @gensym f_var kernel_f kernel_args kernel_tt kernel
-
-    # convert the arguments, call the compiler and launch the kernel
-    # while keeping the original arguments alive
+	fquote = quote
+		function $(fname)($(builtinArgs...)) where $(Targs)
+			$((fdecl[2].args)...)
+		end
+	end
+	
     push!(code.args,
-        quote
-            $f_var = $f
-            GC.@preserve $(vars...) $f_var begin
-                $kernel_f = $wgpuconvert($f_var)
-                $kernel_args = map($wgpuconvert, ($(var_exprs...),))
-                $kernel_tt = Tuple{map(Core.Typeof, $kernel_args)...}
-                $kernel = $wgpufunction($kernel_f, $kernel_tt; $(compiler_kwargs...))
-                if $launch
-                    $kernel($(var_exprs...); $(call_kwargs...))
-                end
-                $kernel
-            end
-         end)
+		:(@compute @workgroupSize(8, 8, 4) $(fquote.args...))
+   	)
 
-    return esc(quote
-        let
-            $code
-        end
-    end)
+    return code
 end
 
-
-## argument conversion
-
-struct Adaptor
-    cce::Union{Nothing, WGPUCore.GPUCommandEncoder}
-end
-
-# convert Metal buffers to their GPU address
-function Adapt.adapt_storage(to::Adaptor, buf::WGPUCore.GPUBuffer)
-    if to.cce !== nothing && buf.handle != C_NULL
-        WGPUCore.use!(to.cce, buf, WGPUCore.ReadWriteUsage)
-    end
-    reinterpret(Core.LLVMPtr{Nothing,AS.Device}, buf.gpuAddress)
-end
-function Adapt.adapt_storage(to::Adaptor, ptr::WgpuArrayPtr{T}) where {T}
-    reinterpret(Core.LLVMPtr{T,AS.Device}, adapt(to, ptr.buffer)) + ptr.offset
-end
-
-# Base.RefValue isnt GPU compatible, so provide a compatible alternative
-struct WgpuRefValue{T} <: Ref{T}
-  x::T
-end
-Base.getindex(r::WgpuRefValue) = r.x
-Adapt.adapt_structure(to::Adaptor, r::Base.RefValue) = WgpuRefValue(adapt(to, r[]))
-
-function Adapt.adapt_storage(to::Adaptor, xs::WgpuArray{T,N}) where {T,N}
-    buf = pointer(xs)
-    ptr = adapt(to, buf)
-    WgpuDeviceArray{T,N,AS.Device}(xs.dims, ptr)
-end
-
-"""
-  wgpuconvert(x, [cce])
-
-This function is called for every argument to be passed to a kernel, allowing it to be
-converted to a GPU-friendly format. By default, the function does nothing and returns the
-input object `x` as-is.
-
-Do not add methods to this function, but instead extend the underlying Adapt.jl package and
-register methods for the the `Metal.Adaptor` type.
-"""
-wgpuconvert(arg, cce=nothing) = adapt(Adaptor(cce), arg)
+# src = wgpu(Relu, x)
 
 
-## host-side kernel API
+# using WGSLTypes
+# using MacroTools
+# 
+# using GeometryBasics: Vec2, Vec3, Vec4, Mat4, Mat3, Mat2
+# 
+# export @code_wgsl
+# 
+# macro user(expr)
+	# getproperty(@__MODULE__, expr)
+# end
+# 
 
-struct HostKernel{F,TT}
-    f::F
-    fun::Function
-    pipeline_state::WGPUCore.GPUComputePipeline
-end
+# # TODO this function takes block of fields too
+# # Another function that makes a sequence of field
+# # statements is needed.
+# function evalStructField(fieldDict, field)
+	# if @capture(field, if cond_ ifblock__ end)
+		# if eval(cond) == true
+			# for iffield in ifblock
+				# evalStructField(fieldDict, iffield)
+			# end
+		# end
+	# elseif @capture(field, if cond_ ifblock__ else elseBlock__ end)
+		# if eval(cond) == true
+			# for iffield in ifblock
+				# evalStructField(fieldDict, iffield)
+			# end
+		# else
+			# for elsefield in elseBlock
+				# evalStructField(fieldDict, elsefield)
+			# end
+		# end
+	# elseif @capture(field, name_::dtype_)
+		# return merge!(fieldDict, Dict(name=>eval(dtype)))
+	# elseif @capture(field, @builtin btype_ name_::dtype_)
+		# return merge!(fieldDict, Dict(name=>eval(:(@builtin $btype $dtype))))
+	# elseif @capture(field, @location btype_ name_::dtype_)
+		# return merge!(fieldDict, Dict(name=>eval(:(@location $btype $dtype))))
+	# elseif @capture(field, quote stmnts__ end)
+		# for stmnt in stmnts
+			# evalStructField(fieldDict, stmnt)
+		# end
+	# else
+		# @error "Unknown struct field! $field"
+	# end
+# end
+# 
+# function wgslStruct(expr)
+	# expr = MacroTools.striplines(expr)
+	# expr = MacroTools.flatten(expr)
+	# @capture(expr, struct T_ fields__ end) || error("verify struct format of $T with fields $fields")
+	# fieldDict = Dict{Symbol, DataType}()
+	# for field in fields
+		# evalfield = evalStructField(fieldDict, field)
+	# end
+	# makePaddedStruct(T, :UserStruct, sort(fieldDict))
+	# makePaddedWGSLStruct(T, sort(fieldDict))
+# end
+# 
+# # TODO rename simple asssignment and bring back original assignment if needed
+# function wgslAssignment(expr)
+	# io = IOBuffer()
+	# @capture(expr, a_ = b_) || error("Expecting simple assignment a = b")
+	# write(io, "$(wgslType(a)) = $(wgslType(b));\n")
+	# seek(io, 0)
+	# stmnt = read(io, String)
+	# close(io)
+	# return stmnt
+# end
+# 
+# 
+# function wgslFunctionStatement(io, stmnt)
+	# if @capture(stmnt, @var t__)
+		# write(io, " "^4*wgslVariable(stmnt))
+	# elseif @capture(stmnt, a_ = b_)
+		# write(io, " "^4*wgslAssignment(stmnt))
+	# elseif @capture(stmnt, @let t_ | @let t__)
+		# stmnt.args[1] = Symbol("@letvar") # replace let with letvar
+		# write(io, " "^4*wgslLet(stmnt))
+	# elseif @capture(stmnt, return t_)
+		# write(io, " "^4*"return $(wgslType(t));\n")
+	# elseif @capture(stmnt, if cond_ ifblock__ end)
+		# if cond == true
+			# wgslFunctionStatements(io, ifblock)
+		# end
+	# elseif @capture(stmnt, if cond_ ifBlock__ else elseBlock__ end)
+		# if eval(cond) == true
+			# wgslFunctionStatements(io, ifBlock)
+		# else
+			# wgslFunctionStatements(io, elseBlock)
+		# end
+	# else
+		# @error "Failed to capture statment : $stmnt !!"
+	# end
+# end
+# 
+# function wgslFunctionStatements(io, stmnts)
+	# for stmnt in stmnts
+		# wgslFunctionStatement(io, stmnt)
+	# end
+# end
+# 
+# function wgslFunctionBody(fnbody, io, endstring)
+	# if @capture(fnbody[1], fnname_(fnargs__)::fnout_)
+		# write(io, "fn $fnname(")
+		# len = length(fnargs)
+		# endstring = len > 0 ? "}\n" : ""
+		# for (idx, arg) in enumerate(fnargs)
+			# if @capture(arg, aarg_::aatype_)
+				# intype = wgslType(eval(aatype))
+				# write(io, "$aarg:$(intype)"*(len==idx ? "" : ", "))
+			# elseif @capture(arg, @builtin e_ => id_::typ_)
+				# intype = wgslType(eval(typ))
+				# write(io, "@builtin($e) $id:$(intype)")
+			# end
+			# @capture(fnargs, aarg_) || error("Expecting type for function argument in WGSL!")
+		# end
+		# outtype = wgslType(eval(fnout))
+		# write(io, ") -> $outtype { \n")
+		# @capture(fnbody[2], stmnts__) || error("Expecting quote statements")
+		# wgslFunctionStatements(io, stmnts)
+	# elseif @capture(fnbody[1], fnname_(fnargs__))
+		# write(io, "fn $fnname(")
+		# len = length(fnargs)
+		# endstring = len > 0 ? "}\n" : ""
+		# for (idx, arg) in enumerate(fnargs)
+			# if @capture(arg, aarg_::aatype_)
+				# intype = wgslType(eval(aatype))
+				# write(io, "$aarg:$(intype)"*(len==idx ? "" : ", "))
+			# elseif @capture(arg, @builtin e_ => id_::typ_)
+				# intype = wgslType(eval(typ))
+				# write(io, "@builtin($e) $id:$(intype)")
+			# end
+			# @capture(fnargs, aarg_) || error("Expecting type for function argument in WGSL!")
+		# end
+		# write(io, ") { \n")
+		# @capture(fnbody[2], stmnts__) || error("Expecting quote statements")
+		# wgslFunctionStatements(io, stmnts)
+	# end
+	# write(io, endstring)
+# end
+# 
+# 
+# 
+# function wgslVertex(expr)
+	# io = IOBuffer()
+	# endstring = ""
+	# @capture(expr, @vertex function fnbody__ end) || error("Expecting regular function!")
+	# write(io, "@stage(vertex) ") # TODO should depend on version
+	# wgslFunctionBody(fnbody, io, endstring)
+	# seek(io, 0)
+	# code = read(io, String)
+	# close(io)
+	# return code
+# end
+# 
+# function wgslFragment(expr)
+	# io = IOBuffer()
+	# endstring = ""
+	# @capture(expr, @fragment function fnbody__ end) || error("Expecting regular function!")
+	# write(io, "@stage(fragment) ") # TODO should depend on version
+	# wgslFunctionBody(fnbody, io, endstring)
+	# seek(io, 0)
+	# code = read(io, String)
+	# close(io)
+	# return code
+# end
+# 
+# function wgslCompute(expr)
+	# io = IOBuffer()
+	# endstring = ""
+	# if @capture(expr, @compute @workgroupSize(x_) function fnbody__ end)
+		# write(io, "@stage(compute) @workgroup_size($x) \n")
+	# elseif	@capture(expr, @compute @workgroupSize(x_,) function fnbody__ end)
+		# write(io, "@stage(compute) @workgroup_size($x) \n")
+	# elseif @capture(expr, @compute @workgroupSize(x_, y_) function fnbody__ end)
+		# write(io, "@stage(compute) @workgroup_size($x, $y) \n")
+	# elseif @capture(expr, @compute @workgroupSize(x_, y_, z_) function fnbody__ end)
+		# write(io, "@stage(compute) @workgroup_size($x, $y, $z) \n")
+	# else
+		# error("Did not match the compute declaration function!")
+	# end
+	# wgslFunctionBody(fnbody, io, endstring)
+	# seek(io, 0)
+	# code = read(io, String)
+	# close(io)
+	# return code
+# end
+# 
+# function wgslFunction(expr)
+	# io = IOBuffer()
+	# endstring = ""
+	# @capture(expr, function fnbody__ end) || error("Expecting regular function!")
+	# wgslFunctionBody(fnbody, io, endstring)
+	# seek(io, 0)
+	# code = read(io, String)
+	# close(io)
+	# return code
+# end
+# 
+# function wgslVariable(expr)
+	# io = IOBuffer()
+	# write(io, wgslType(eval(expr)))
+	# seek(io, 0)
+	# code = read(io, String)
+	# close(io)
+	# return code
+# end
+# 
+# # TODO for now both wgslVariable and wgslLet are same
+# function wgslLet(expr)
+	# io = IOBuffer()
+	# write(io, wgslType(eval(expr)))
+	# seek(io, 0)
+	# code = read(io, String)
+	# close(io)
+	# return code
+# end
+# 
+# # IOContext TODO
+# function wgslCode(expr)
+	# io = IOBuffer()
+	# expr = MacroTools.striplines(expr)
+	# expr = MacroTools.flatten(expr)
+	# @capture(expr, blocks__) || error("Current expression is not a quote or block")
+	# for block in blocks
+		# if @capture(block, struct T_ fields__ end)
+			# write(io, wgslStruct(block))
+		# elseif @capture(block, a_ = b_)
+			# write(io, wgslAssignment(block))
+		# elseif @capture(block, @var t__)
+			# write(io, wgslVariable(block))
+		# elseif @capture(block, @vertex function a__ end)
+			# write(io, wgslVertex(block))
+			# write(io, "\n")
+		# elseif @capture(block, @compute @workgroupSize(x__) function a__ end)
+			# write(io, wgslCompute(block))
+			# write(io, "\n")
+		# elseif @capture(block, @fragment function a__ end)
+			# write(io, wgslFragment(block))
+			# write(io, "\n")
+		# elseif @capture(block, function a__ end)
+			# write(io, wgslFunction(block))
+			# write(io, "\n")
+		# elseif @capture(block, if cond_ ifblock_ end)
+			# if eval(cond) == true
+				# write(io, wgslCode(ifblock))
+				# write(io, "\n")
+			# end
+		# elseif @capture(block, if cond_ ifBlock_ else elseBlock_ end)
+			# if eval(cond) == true
+				# write(io, wgslCode(ifBlock))
+				# write(io, "\n")
+			# else
+				# write(io, wgslCode(elseBlock))
+				# write(io, "\n")
+			# end
+		# end
+	# end
+	# seek(io, 0)
+	# code = read(io, String)
+	# close(io)
+	# return code
+# end
+# 
+# macro code_wgsl(expr)
+	# a = wgslCode(eval(expr)) |> println
+	# return a
+# end
 
-"""
-    wgpufunction(f, tt=Tuple{}; kwargs...)
-
-Low-level interface to compile a function invocation for the currently-active GPU, returning
-a callable kernel object. For a higher-level interface, use [`@metal`](@ref).
-
-The output of this function is automatically cached, i.e. you can simply call `wgpufunction`
-in a hot path without degrading performance. New code will be generated automatically when
-the function changes, or when different types or keyword arguments are provided.
-"""
-function wgpufunction(f::F, tt::TT=Tuple{}; name=nothing, kwargs...) where {F,TT}
-    dev = WgpuDevice(1)
-    cache = get!(()->Dict{UInt,Any}(), wgpufunction_cache, dev)
-    source = FunctionSpec(f, tt, true, name)
-    target = MetalCompilerTarget(macos=macos_version(); kwargs...)
-    params = MetalCompilerParams()
-    job = CompilerJob(target, source, params)
-    fun, pipeline_state =
-        GPUCompiler.cached_compilation(cache, job,
-                                       wgpufunction_compile, wgpufunction_link)
-    # compilation is cached on the function type, so we can only create a kernel object here
-    # (as it captures the function _instance_). we may want to cache those objects.
-    HostKernel{F,tt}(f, fun, pipeline_state)
-end
-
-const wgpufunction_cache = Dict{Any,Any}()
-
-function wgpufunction_compile(@nospecialize(job::CompilerJob))
-    # TODO: on 1.9, this actually creates a context. cache those.
-    JuliaContext() do ctx
-        wgpufunction_compile(job, ctx)
-    end
-end
-function wgpufunction_compile(@nospecialize(job::CompilerJob), ctx)
-    mi, mi_meta = GPUCompiler.emit_julia(job)
-    ir, ir_meta = GPUCompiler.emit_llvm(job, mi; ctx)
-    entry = LLVM.name(ir_meta.entry)
-    image, asm_meta = GPUCompiler.emit_asm(job, ir; format=LLVM.API.LLVMObjectFile)
-    return (; image, entry)
-end
-
-function wgpufunction_link(@nospecialize(job::CompilerJob), compiled)
-    dev = current_device()
-    lib = WgpuLibraryFromData(dev, compiled.image)
-    fun = Function(lib, compiled.entry)
-    pipeline_state = try
-        WgpuComputePipelineState(dev, fun)
-    catch
-        # the back-end compiler likely failed
-        # XXX: check more accurately? the error domain doesnt help much here
-        metallib = tempname(cleanup=false) * ".metallib"
-        write(metallib, compiled.image)
-        @warn """Compilation of MetalLib to native code failed.
-                 If you think this is a bug, please file an issue and attach $(metallib)."""
-        rethrow()
-    end
-    fun, pipeline_state
-end
-
-# TODO remove this
-const WgpuDim = Dims
-const WgpuDim3 = Dims{3}
-
-## kernel launching and argument encoding
-
-function (kernel::HostKernel)(args...; grid::WgpuDim=1, threads::WgpuDim=1)
-    grid = WgpuDim3(grid)
-    threads = WgpuDim3(threads)
-    (grid.width>0 && grid.height>0 && grid.depth>0) ||
-        throw(ArgumentError("Grid dimensions should be non-null"))
-    (threads.width>0 && threads.height>0 && threads.depth>0) ||
-        throw(ArgumentError("Threadgroup dimensions should be non-null"))
-
-    (threads.width * threads.height * threads.depth) > kernel.pipeline_state.maxTotalThreadsPerThreadgroup &&
-        throw(ArgumentError("Max total threadgroup size should not exceed $(kernel.pipeline_state.maxTotalThreadsPerThreadgroup)"))
-
-    cmdq = global_queue(kernel.fun.lib.device)
-    cmdbuf = WgpuCommandBuffer(cmdq)
-    cmdbuf.label = "WgpuCommandBuffer($(nameof(kernel.f)))"
-    argument_buffers = WgpuBuffer[]
-    WgpuComputeCommandEncoder(cmdbuf) do cce
-        WGPUCore.set_function!(cce, kernel.pipeline_state)
-
-        # encode arguments
-        idx = 1
-        for arg in (kernel.f, args...)
-            if arg isa WgpuBuffer
-                # top-level buffers are passed as a pointer-valued argument
-                set_buffer!(cce, arg, 0, idx)
-            elseif arg isa WgpuPointer
-                # the same as a buffer, but with an offset
-                set_buffer!(cce, arg.buffer, arg.offset, idx)
-            else
-                # everything else is passed by reference, and requires an argument buffer
-                arg = wgpuconvert(arg, cce)
-                argtyp = Core.typeof(arg)
-                if isghosttype(argtyp) || Core.Compiler.isconstType(argtyp)
-                    continue
-                end
-                @assert isbits(arg)
-                argument_buffer = alloc(kernel.fun.lib.device, sizeof(argtyp),
-                                        storage=Shared)
-                argument_buffer.label = "WgpuBuffer for kernel argument"
-                unsafe_store!(convert(Ptr{argtyp}, contents(argument_buffer)), arg)
-                set_buffer!(cce, argument_buffer, 0, idx)
-                push!(argument_buffers, argument_buffer)
-            end
-            idx += 1
-        end
-
-        WGPUCore.append_current_function!(cce, grid, threads)
-    end
-
-    # the command buffer retains resources that are explicitly encoded (i.e. direct buffer
-    # arguments, or the buffers allocated for each other argument), but that doesnt keep
-    # other resources alive for which weve encoded the GPU address ourselves. since its
-    # possible for buffers to go out of scope while the kernel is still running, which
-    # triggers validation failures, keep track of things we need to keep alive until the
-    # kernel has actually completed.
-    #
-    # TODO: is there a way to bind additional resources to the command buffer?
-    roots = [kernel.f, args]
-    WGPUCore.on_completed(cmdbuf) do
-        empty!(roots)
-        foreach(free, argument_buffers)
-
-        # TODO: access logs here to check for errors
-        #       https://developer.apple.com/videos/play/wwdc2020/10616/
-    end
-
-    commit!(cmdbuf)
-end
