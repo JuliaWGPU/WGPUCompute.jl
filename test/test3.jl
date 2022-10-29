@@ -2,6 +2,8 @@ using WGPUCompute
 using Debugger
 using WGPUCore
 using MacroTools
+using CodeTracking
+using Revise
 
 using WGPUCompute: getShaderCode
 
@@ -19,9 +21,19 @@ dump(src)
 
 wgpu(relu, y)
 
-
 function Relu(x::WgpuArray{T}) where T
-	max(0.0, x)
+	max_x = max(0.0, x)
+	max_x += 2
+	out = max_x*2
 end
 
-dump(@code_expr(Relu(x)))
+fexpr = @code_expr(Relu(y))
+
+@capture(fexpr, function name_(args__) where Targs_ fbody__ end)
+
+
+for stmts in fbody
+	stmts
+end
+
+
