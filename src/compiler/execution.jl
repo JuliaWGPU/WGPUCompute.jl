@@ -26,16 +26,16 @@ using WGPUCompute
 
 function wgpu(f, x)
 	T = eltype(x)
-	expr = @code_expr(f(x))
-	@capture(expr, function fdecl__ end) || error("Couldnt capture function")
-	@capture(fdecl[1], fname_(fargs__) where Targs_) || error("Couldnt function signature")  
-
-	# @capture(fexpr, function fname_(fargs__) where Targs_ fbody__ end)
+	fexpr = @code_expr(f(x))
+	# @capture(expr, function fdecl__ end) || error("Couldnt capture function")
+	# @capture(fdecl[1], fname_(fargs__) where Targs_) || error("Couldnt function signature")
+	
+	@capture(fexpr, function fname_(fargs__) where Targs_ fbody__ end)
 	
 	originArgs = fargs[:]
-
+	
 	builtinArgs = [:(@builtin global_invocation_id => global_id::Vec3{UInt32})]
-
+	
 	"""
 	
 	# This section needs to be generated too
@@ -60,21 +60,25 @@ function wgpu(f, x)
     end
     
     """
-
-	code = quote end
-
-	# stmnts = emitWGSLJuliaBody(fbody, fargs)
+	
+	code = quote 
+		struct IOArray
+			data::WArray{$T}
+		end
+	end
+	
+	cntxt = emitWGSLJuliaBody(fbody, fargs)
 	
 	fquote = quote
 		function $(fname)($(builtinArgs...))
-			$((fdecl[2].args)...)
+			$((cntxt.stmnts)...)
 		end
 	end
 	
     push!(code.args,
 		:(@compute @workgroupSize(8, 8, 4) $(fquote.args...))
    	)
-
+	
     return code
 end
 
@@ -93,17 +97,25 @@ end
 
 function emitWGSLJuliaBody(fbody, inargs)
 	ins = Symbol[]
+	
 	for arg in inargs
 		@capture(arg, a_::b_)
 		push!(ins, a)
 	end
-	cntxt = WgpuContext(ins, Symbol[], Symbol[], Expr[])
+
+	# TODO better outs inference
+	# TODO strong assumption that out statement is an assignment
+	@capture(fbody[end], a_=b_)
+	outs = Symbol[a]
+
+	cntxt = WgpuContext(ins, outs, Symbol[], Expr[])
 	wgslFunctionStatements(cntxt, fbody)
 	cntxt
 	
 	# TODO infer outargs too
 	# so that we can generate the necessary output structs with
 	# appropriate readwrite operations
+	# for now lets assume last statement is output
 	
 end
 
@@ -113,22 +125,32 @@ function wgslAssignment(expr::Expr, prefix::Union{Nothing, Symbol})
 end
 
 function wgslFunctionStatements(cntxt, stmnts)
-	for stmnt in stmnts
-		wgslFunctionStatement(cntxt, stmnt)
+	for (i, stmnt) in enumerate(stmnts)
+		wgslFunctionStatement(cntxt, stmnt; isLast=(length(stmnts) == i))
 	end
 end
 
-function wgslFunctionStatement(cntxt::WgpuContext, stmnt)
+function wgslFunctionStatement(cntxt::WgpuContext, stmnt; isLast = false)
 	if @capture(stmnt, a_ = b_)
-		if a in cntxt.tmpargs
+		if (a in cntxt.tmpargs) && !(a in cntxt.inargs) && !(a in cntxt.outargs)
 			push!(cntxt.stmnts, wgslAssignment(stmnt, nothing))
+		elseif (a in cntxt.inargs)
+			# TODO deal with inargs
+			pushfirst!(cntxt.stmnts, quote 
+				@var StorageReadWrite 0 0 input0::IOArray
+			end)
+		elseif (a in cntxt.outargs)
+			pushfirst!(cntxt.stmnts, quote 
+				@var StorageReadWrite 0 1 output0::IOArray
+			end)
+			push!(cntxt.stmnts, stmnt)
 		else
 			push!(cntxt.stmnts, wgslAssignment(stmnt, :let))
 			push!(cntxt.tmpargs, a)
 		end
 	elseif @capture(stmnt, @let t_ | @let t__)
-		stmnt.args[1] = Symbol("@letvar") # replace let with letvar
-		push!(cntxt.stmnts, wgslLet(stmnt))
+		# pass through for now
+		push!(cntxt.stmnts, stmnt)
 	elseif @capture(stmnt, a_ += b_)
 		wgslFunctionStatement(cntxt, :($a = $a + $b))
 	elseif @capture(stmnt, a_ -= b_)
