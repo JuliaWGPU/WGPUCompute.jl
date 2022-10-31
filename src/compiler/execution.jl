@@ -1,4 +1,4 @@
-export @wgpu, wgpu
+export @wgpu, wgpu, emitWGSLJuliaBody
 
 """
     @wgpu [kwargs...] func(args...)
@@ -30,10 +30,18 @@ function wgpu(f, x)
 	@capture(expr, function fdecl__ end) || error("Couldnt capture function")
 	@capture(fdecl[1], fname_(fargs__) where Targs_) || error("Couldnt function signature")  
 
+	# @capture(fexpr, function fname_(fargs__) where Targs_ fbody__ end)
+	
 	originArgs = fargs[:]
 
 	builtinArgs = [:(@builtin global_invocation_id => global_id::Vec3{UInt32})]
 
+	"""
+	
+	# This section needs to be generated too
+	# Since kernels can have more than one input
+	# we need to accomodate for that.
+	
     code = quote 
 		struct IOArray
 			data::WArray{$T}
@@ -50,9 +58,15 @@ function wgpu(f, x)
 		@var StorageReadWrite 0 0 input0::IOArray
 		@var StorageReadWrite 0 1 output0::IOArray
     end
+    
+    """
 
+	code = quote end
+
+	# stmnts = emitWGSLJuliaBody(fbody, fargs)
+	
 	fquote = quote
-		function $(fname)($(builtinArgs...)) where $(Targs)
+		function $(fname)($(builtinArgs...))
 			$((fdecl[2].args)...)
 		end
 	end
@@ -64,28 +78,39 @@ function wgpu(f, x)
     return code
 end
 
+macro wgpu(expr, x)
+	wgpu(expr, x)
+end
 
 mutable struct WgpuContext
-	args::Array{Symbol}
+	inargs::Array{Symbol}
+	outargs::Array{Symbol}
+	tmpargs::Array{Symbol}
+	stmnts::Array{Expr}
 end
 
-@forward WgpuContext.args push! 
+# @forward WgpuContext.args push!
 
-function emitWGSLJuliaBody(fbody)
-	cntxt = WgpuContext(Symbol[])
+function emitWGSLJuliaBody(fbody, inargs)
+	ins = Symbol[]
+	for arg in inargs
+		@capture(arg, a_::b_)
+		push!(ins, a)
+	end
+	cntxt = WgpuContext(ins, Symbol[], Symbol[], Expr[])
 	wgslFunctionStatements(cntxt, fbody)
+	cntxt
+	
+	# TODO infer outargs too
+	# so that we can generate the necessary output structs with
+	# appropriate readwrite operations
+	
 end
-
 
 function wgslAssignment(expr::Expr, prefix::Union{Nothing, Symbol})
 	@capture(expr, a_ = b_) || error("Expecting simple assignment a = b")
-	write(io, "$(wgslType(a)) = $(wgslType(b));\n")
-	seek(io, 0)
-	stmnt = read(io, String)
-	close(io)
-	return stmnt
+	return ifelse(prefix==:let, :(@let $a = $b), :($a = $b))
 end
-
 
 function wgslFunctionStatements(cntxt, stmnts)
 	for stmnt in stmnts
@@ -93,22 +118,27 @@ function wgslFunctionStatements(cntxt, stmnts)
 	end
 end
 
-
 function wgslFunctionStatement(cntxt::WgpuContext, stmnt)
 	if @capture(stmnt, a_ = b_)
-		if a in cntxt.args
-			# if a is not seen before then it must be local
-			# TODO check if its referring to global variable
-			# or input/output variable
-			wglsAssignment(stmnt, :let)
+		if a in cntxt.tmpargs
+			push!(cntxt.stmnts, wgslAssignment(stmnt, nothing))
 		else
-			push!(cntxt, " "^4*wgslAssignment(stmnt, nothing))
+			push!(cntxt.stmnts, wgslAssignment(stmnt, :let))
+			push!(cntxt.tmpargs, a)
 		end
 	elseif @capture(stmnt, @let t_ | @let t__)
 		stmnt.args[1] = Symbol("@letvar") # replace let with letvar
-		push!(cntxt, " "^4*wgslLet(stmnt))
+		push!(cntxt.stmnts, wgslLet(stmnt))
+	elseif @capture(stmnt, a_ += b_)
+		wgslFunctionStatement(cntxt, :($a = $a + $b))
+	elseif @capture(stmnt, a_ -= b_)
+		wgslFunctionStatement(cntxt, :($a = $a - $b))
+	elseif @capture(stmnt, a_ *= b_)
+		wgslFunctionStatement(cntxt, :($a = $a * $b))
+	elseif @capture(stmnt, a_ /= b_)
+		wgslFunctionStatement(cntxt, :($a = $a / $b))
 	elseif @capture(stmnt, return t_)
-		push!(cntxt, " "^4*"return $(wgslType(t));\n")
+		push!(cntxt.stmnts, (wgslType(t)))
 	elseif @capture(stmnt, if cond_ ifblock__ end)
 		if cond == true
 			wgslFunctionStatements(io, ifblock)

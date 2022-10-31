@@ -31,9 +31,9 @@ fexpr = @code_expr(Relu(y))
 
 @capture(fexpr, function name_(args__) where Targs_ fbody__ end)
 
-
 for stmts in fbody
-	stmts
+	@info stmts
 end
 
+emitWGSLJuliaBody(fbody, args)
 
