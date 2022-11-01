@@ -74,6 +74,8 @@ function wgpu(f, x)
 			$((cntxt.stmnts)...)
 		end
 	end
+
+	push!(code.args, cntxt.globals...)
 	
     push!(code.args,
 		:(@compute @workgroupSize(8, 8, 4) $(fquote.args...))
@@ -86,37 +88,34 @@ macro wgpu(expr, x)
 	wgpu(expr, x)
 end
 
-mutable struct WgpuContext
-	inargs::Array{Symbol}
-	outargs::Array{Symbol}
+mutable struct KernelContext
+	inargs::Dict{Symbol, Any}
+	outargs::Dict{Symbol, Any}
 	tmpargs::Array{Symbol}
+	typeargs::Array{Symbol}
 	stmnts::Array{Expr}
+	globals::Array{Expr}
 end
 
-# @forward WgpuContext.args push!
+# @forward KernelContext.args push!
 
 function emitWGSLJuliaBody(fbody, inargs)
-	ins = Symbol[]
-	
+	ins = Dict{Symbol, Any}()
+	outs = Dict{Symbol, Any}()
 	for arg in inargs
 		@capture(arg, a_::b_)
-		push!(ins, a)
+		ins[:a] = false
 	end
-
+	
 	# TODO better outs inference
 	# TODO strong assumption that out statement is an assignment
 	@capture(fbody[end], a_=b_)
-	outs = Symbol[a]
-
-	cntxt = WgpuContext(ins, outs, Symbol[], Expr[])
+	outs[a] = false
+	
+	cntxt = KernelContext(ins, outs, Symbol[], Symbol[], Expr[], Expr[])
 	wgslFunctionStatements(cntxt, fbody)
 	cntxt
-	
-	# TODO infer outargs too
-	# so that we can generate the necessary output structs with
-	# appropriate readwrite operations
-	# for now lets assume last statement is output
-	
+
 end
 
 function wgslAssignment(expr::Expr, prefix::Union{Nothing, Symbol})
@@ -130,18 +129,32 @@ function wgslFunctionStatements(cntxt, stmnts)
 	end
 end
 
-function wgslFunctionStatement(cntxt::WgpuContext, stmnt; isLast = false)
+function wgslFunctionStatement(cntxt::KernelContext, stmnt; isLast = false)
 	if @capture(stmnt, a_ = b_)
-		if (a in cntxt.tmpargs) && !(a in cntxt.inargs) && !(a in cntxt.outargs)
+		if (a in cntxt.tmpargs) && !(a in cntxt.inargs |> keys) && !(a in cntxt.outargs |> keys)
 			push!(cntxt.stmnts, wgslAssignment(stmnt, nothing))
-		elseif (a in cntxt.inargs)
+		elseif (a in cntxt.inargs |> keys)
 			# TODO deal with inargs
-			pushfirst!(cntxt.stmnts, quote 
-				@var StorageReadWrite 0 0 input0::IOArray
+			iovar = Symbol(:input, length(cntxt.inargs |> keys) + 1)
+			push!(cntxt.globals, quote
+				@var StorageReadWrite 0 0 $(iovar)::IOArray
 			end)
-		elseif (a in cntxt.outargs)
-			pushfirst!(cntxt.stmnts, quote 
-				@var StorageReadWrite 0 1 output0::IOArray
+		elseif (b in cntxt.inargs |> keys)
+			# TODO deal with inargs
+			iovar = Symbol(:input, length(cntxt.inargs |> keys) + 1)
+			push!(cntxt.globals, quote
+				@var StorageReadWrite 0 0 $(iovar)::IOArray
+			end)
+		elseif (a in cntxt.outargs |> keys)
+			iovar = Symbol(:output, length(cntxt.outargs |> keys) + 1)
+			push!(cntxt.globals, quote 
+				@var StorageReadWrite 0 1 $(iovar)::IOArray
+			end)
+			push!(cntxt.stmnts, :($(iovar).data = $(b)))
+		elseif (b in cntxt.outargs |> keys)
+			iovar = Symbol(:outargs, length(cntxt.outargs |> keys) + 1)
+			push!(cntxt.globals, quote 
+				@var StorageReadWrite 0 1 $(iovar)::IOArray
 			end)
 			push!(cntxt.stmnts, stmnt)
 		else
@@ -149,6 +162,9 @@ function wgslFunctionStatement(cntxt::WgpuContext, stmnt; isLast = false)
 			push!(cntxt.tmpargs, a)
 		end
 	elseif @capture(stmnt, @let t_ | @let t__)
+		# pass through for now
+		push!(cntxt.stmnts, stmnt)
+	elseif @capture(stmnt, @var t_ | @let t__)
 		# pass through for now
 		push!(cntxt.stmnts, stmnt)
 	elseif @capture(stmnt, a_ += b_)
