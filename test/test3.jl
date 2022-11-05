@@ -19,12 +19,9 @@ src = MacroTools.striplines(getShaderCode(relu, y))
 
 dump(src)
 
-wgpu(relu, y)
-
 function Relu(x::WgpuArray{T}) where T
-	max_x = max(0.0, x)
-	max_x += 2
-	out = max_x*2
+	gIdx = globalId.x*globalId.y + globalId.z
+	value = x[gIdx]
 end
 
 fexpr = @code_expr(Relu(y))
@@ -35,5 +32,12 @@ for stmts in fbody
 	@info stmts
 end
 
-emitWGSLJuliaBody(fbody, args)
+cntxt = emitWGSLJuliaBody(fbody, args)
 
+wgpu(Relu, y) |> MacroTools.striplines
+
+wgpu(Relu, y) |> MacroTools.flatten |> MacroTools.striplines
+
+# using Debugger
+# 
+# @enter emitWGSLJuliaBody(fbody, args)

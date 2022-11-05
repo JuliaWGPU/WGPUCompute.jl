@@ -1,7 +1,7 @@
 export @wgpu, wgpu, emitWGSLJuliaBody
 
 """
-    @wgpu [kwargs...] func(args...)
+@wgpu [kwargs...] func(args...)
 
 High-level interface for executing code on a GPU. The `@wgpu` macro should prefix a call,
 with `func` a callable function or object that should return nothing. It will be compiled to
@@ -27,13 +27,13 @@ using WGPUCompute
 function wgpu(f, x)
 	T = eltype(x)
 	fexpr = @code_expr(f(x))
+	
 	# @capture(expr, function fdecl__ end) || error("Couldnt capture function")
 	# @capture(fdecl[1], fname_(fargs__) where Targs_) || error("Couldnt function signature")
 	
 	@capture(fexpr, function fname_(fargs__) where Targs_ fbody__ end)
 	
 	originArgs = fargs[:]
-	
 	builtinArgs = [:(@builtin global_invocation_id => global_id::Vec3{UInt32})]
 	
 	"""
@@ -95,6 +95,7 @@ mutable struct KernelContext
 	typeargs::Array{Symbol}
 	stmnts::Array{Expr}
 	globals::Array{Expr}
+	indent::Int
 end
 
 # @forward KernelContext.args push!
@@ -102,20 +103,37 @@ end
 function emitWGSLJuliaBody(fbody, inargs)
 	ins = Dict{Symbol, Any}()
 	outs = Dict{Symbol, Any}()
-	for arg in inargs
-		@capture(arg, a_::b_)
-		ins[:a] = false
+
+	cntxt = KernelContext(ins, outs, Symbol[], Symbol[], Expr[], Expr[], 0)
+	
+	for (idx, arg) in enumerate(inargs)
+		if @capture(arg, a_::b_)
+			iovar = Symbol(:input, idx-1)
+			push!(cntxt.globals, quote
+				@var StorageReadWrite 0 $(idx-1) $(iovar)::IOArray
+			end)
+			ins[a] = iovar
+		else
+			@error "Could not capture input arguments"
+		end
 	end
-	
-	# TODO better outs inference
-	# TODO strong assumption that out statement is an assignment
-	@capture(fbody[end], a_=b_)
-	outs[a] = false
-	
-	cntxt = KernelContext(ins, outs, Symbol[], Symbol[], Expr[], Expr[])
+
+	# TODO this is stupid but good first implementation maybe
+	# This assumes that the output argument is lhs of last stmnt
+	if @capture(fbody[end], a_=b_)
+		idx = length(ins)
+		iovar = Symbol(:ouput, idx)
+		outs[a] = iovar
+		push!(cntxt.globals, quote
+			@var StorageReadWrite 0 $(idx) $(iovar)::IOArray
+		end)
+	elseif false
+		# TODO others like return
+		# TODO others like just symbol
+	end
+
 	wgslFunctionStatements(cntxt, fbody)
 	cntxt
-
 end
 
 function wgslAssignment(expr::Expr, prefix::Union{Nothing, Symbol})
@@ -129,52 +147,64 @@ function wgslFunctionStatements(cntxt, stmnts)
 	end
 end
 
+function resolveInOutVars(cntxt, expr)
+	
+end
+
 function wgslFunctionStatement(cntxt::KernelContext, stmnt; isLast = false)
 	if @capture(stmnt, a_ = b_)
 		if (a in cntxt.tmpargs) && !(a in cntxt.inargs |> keys) && !(a in cntxt.outargs |> keys)
+			stmnt = :($(wgslFunctionStatement(a)) = $(wgslFunctionStatement(b)))
 			push!(cntxt.stmnts, wgslAssignment(stmnt, nothing))
-		elseif (a in cntxt.inargs |> keys)
-			# TODO deal with inargs
-			iovar = Symbol(:input, length(cntxt.inargs |> keys) + 1)
-			push!(cntxt.globals, quote
-				@var StorageReadWrite 0 0 $(iovar)::IOArray
-			end)
-		elseif (b in cntxt.inargs |> keys)
-			# TODO deal with inargs
-			iovar = Symbol(:input, length(cntxt.inargs |> keys) + 1)
-			push!(cntxt.globals, quote
-				@var StorageReadWrite 0 0 $(iovar)::IOArray
-			end)
-		elseif (a in cntxt.outargs |> keys)
-			iovar = Symbol(:output, length(cntxt.outargs |> keys) + 1)
-			push!(cntxt.globals, quote 
-				@var StorageReadWrite 0 1 $(iovar)::IOArray
-			end)
-			push!(cntxt.stmnts, :($(iovar).data = $(b)))
-		elseif (b in cntxt.outargs |> keys)
-			iovar = Symbol(:outargs, length(cntxt.outargs |> keys) + 1)
-			push!(cntxt.globals, quote 
-				@var StorageReadWrite 0 1 $(iovar)::IOArray
-			end)
-			push!(cntxt.stmnts, stmnt)
 		else
-			push!(cntxt.stmnts, wgslAssignment(stmnt, :let))
 			push!(cntxt.tmpargs, a)
+			stmnt = :($(wgslFunctionStatement(cntxt, a)) = $(wgslFunctionStatement(cntxt, b)))
+			push!(cntxt.stmnts, wgslAssignment(stmnt, :let))
 		end
+	elseif @capture(stmnt, a_.b_)
+		return :($(wgslFunctionStatement(cntxt, a)).$b)
+	elseif typeof(stmnt) == Symbol
+		if stmnt == :globalId # TODO
+			return :global_id
+		elseif stmnt == :localId
+			return :local_id
+		end
+		if stmnt in cntxt.tmpargs && !(stmnt in cntxt.inargs |> keys) && !(stmnt in cntxt.outargs |> keys)
+			return stmnt
+		elseif (stmnt in cntxt.inargs |> keys)
+			return cntxt.inargs[stmnt]
+		elseif (stmnt in cntxt.outargs |> keys)
+			iovar = Symbol(:output, length(cntxt.outargs |> keys) + 1)
+			return cntxt.outargs[stmnt]
+		else
+			@error "Something is not right with $stmnt expr"
+		end
+	elseif @capture(stmnt, a_[b_])
+		asub = wgslFunctionStatement(cntxt, a)
+		bsub = wgslFunctionStatement(cntxt, b)
+		return :($asub[$bsub])
 	elseif @capture(stmnt, @let t_ | @let t__)
-		# pass through for now
 		push!(cntxt.stmnts, stmnt)
 	elseif @capture(stmnt, @var t_ | @let t__)
-		# pass through for now
 		push!(cntxt.stmnts, stmnt)
 	elseif @capture(stmnt, a_ += b_)
-		wgslFunctionStatement(cntxt, :($a = $a + $b))
+		wgslFunctionStatement(cntxt, :($a = $(wgslFunctionStatement(cntxt, a)) + $(wgslFunctionStatement(cntxt, b))))
 	elseif @capture(stmnt, a_ -= b_)
-		wgslFunctionStatement(cntxt, :($a = $a - $b))
+		wgslFunctionStatement(cntxt, :($a = $(wgslFunctionStatement(cntxt, a)) - $(wgslFunctionStatement(cntxt, b))))
 	elseif @capture(stmnt, a_ *= b_)
-		wgslFunctionStatement(cntxt, :($a = $a * $b))
+		wgslFunctionStatement(cntxt, :($a = $(wgslFunctionStatement(cntxt, a)) * $(wgslFunctionStatement(cntxt, b))))
 	elseif @capture(stmnt, a_ /= b_)
-		wgslFunctionStatement(cntxt, :($a = $a / $b))
+		wgslFunctionStatement(cntxt, :($a = $(wgslFunctionStatement(cntxt, a)) / $(wgslFunctionStatement(cntxt, b))))
+	elseif @capture(stmnt, f_(x_, y_))
+		if f in (:*, :-, :+, :/)
+			x = wgslFunctionStatement(cntxt, x)
+			y = wgslFunctionStatement(cntxt, y)
+			return :($f($x, $y))
+		else
+			return :($f($x, $y))
+		end
+	elseif @capture(stmnt, f_(x__))
+		return :($f(($x...)))
 	elseif @capture(stmnt, return t_)
 		push!(cntxt.stmnts, (wgslType(t)))
 	elseif @capture(stmnt, if cond_ ifblock__ end)
