@@ -10,7 +10,7 @@ struct ShaderObj
 end
 
 
-function createShaderObj(gpuDevice, shaderSource; savefile=false, debug = false)
+function createShaderObj(gpuDevice, shaderSource; savefile=true, debug = true)
 	shaderSource = shaderSource |> wgslCode 
 	shaderBytes  = shaderSource |> Vector{UInt8}
 
@@ -37,7 +37,7 @@ function createShaderObj(gpuDevice, shaderSource; savefile=false, debug = false)
 		descriptor
 	)
 
-	if debug
+	if debug || savefile
 		if shaderObj.internal[].internal[] == Ptr{Nothing}()
 			@error "Shader Obj creation failed"
 			@info "Dumping shader to scratch.wgsl"

@@ -10,6 +10,8 @@ using Adapt
 using Reexport
 using WGSLTypes
 
+WGPUCore.SetLogLevel(WGPUCore.WGPULogLevel_Debug)
+
 include("state.jl")
 include("initialization.jl")
 include("memory.jl")

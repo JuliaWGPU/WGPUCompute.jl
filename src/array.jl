@@ -179,7 +179,7 @@ WgpuArray{T, N}(::UndefInitializer, dims::Integer...) where {T, N} =
 
 # type but not dimensionality specified 
 WgpuArray{T}(::UndefInitializer, dims::Dims{N}) where {T, N} = WgpuArray{T, N}(undef, dims)
-WgpuArray{T}(::UndefInitializer, dims::Integer...) where {T, N} = 
+WgpuArray{T}(::UndefInitializer, dims::Integer...) where T = 
 	WgpuArray{T}(undef, convert(Tuple{Vararg{Int}}, dims))
 
 # empty vector constructors
@@ -410,7 +410,7 @@ end
 
 device(a::Base.PermutedDimsArray) = device(parent(a))
 
-Base.unsafe_convert(::Type{WGPUCore.GPUBuffer}, A::PermutedDimsArray) where {T} =
+Base.unsafe_convert(::Type{WGPUCore.GPUBuffer}, A::PermutedDimsArray) =
     Base.unsafe_convert(WGPUCore.GPUBuffer, parent(A))
 
 

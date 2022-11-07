@@ -3,7 +3,7 @@ using WGPUCore
 using LinearAlgebra
 using StaticArrays
 
-abstract type AbstractLayer{T} end 
+abstract type AbstractLayer{T} end
 abstract type ActivationLayer{T} <: AbstractLayer{T} end
 
 # list of elementwise functions
@@ -30,7 +30,8 @@ function compileShader(relu::ReLULayer{T}, x::AbstractArray{T}) where T
 	return cShader
 end
 
-function (relu::ReLULayer{T})(x::AbstractArray{T}) where T 
+
+function (relu::ReLULayer{T})(x::AbstractArray{T}) where T
 	dims = size(x)
 	# get!(task_local_storage(), (:relu, T, size(x))) do
 		# preparePipeline(relu, x)
@@ -112,8 +113,8 @@ function preparePipeline(relu::ReLULayer{T}, x::AbstractArray{T}, y::AbstractArr
 	append!(bindingLayouts, getBindingLayouts(relu; binding=0))
 	append!(bindings, getBindings(relu, x, y; binding=0))
 	(bindGroupLayouts, bindGroup) = WGPUCore.makeBindGroupAndLayout(
-		gpuDevice, 
-		bindingLayouts, 
+		gpuDevice,
+		bindingLayouts,
 		bindings
 	)
 	pipelineLayout = WGPUCore.createPipelineLayout(gpuDevice, "PipeLineLayout", bindGroupLayouts)
@@ -125,7 +126,7 @@ function preparePipeline(relu::ReLULayer{T}, x::AbstractArray{T}, y::AbstractArr
 	task_local_storage((:relu, :layout, T, size(x)), pipelineLayout)
 	task_local_storage((:relu, :pipeline, T, size(x)), computePipeline)
 	task_local_storage((:relu, :bindgroup, T, size(x)), bindGroup)
-	# task_local_storage((:relu, :computestage, T, size(x)), computeStage)
+	task_local_storage((:relu, :computestage, T, size(x)), computeStage)
 end
 
 
