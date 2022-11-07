@@ -1,4 +1,4 @@
-export @wgpu, wgpu, emitWGSLJuliaBody
+export @kernel, getShaderCode, emitWGSLJuliaBody
 
 """
 @wgpu [kwargs...] func(args...)
@@ -22,16 +22,13 @@ using Lazy
 # TODO remove
 using WGPUCompute
 
-# x = WgpuArray(rand(10, 10, 3) .|> Float32);
-
-function wgpu(f, x)
+function getShaderCode(f, x)
 	T = eltype(x)
+	@info T
+	# f = getproperty(Main, f) # TODO limiting to Main is not good
 	fexpr = @code_expr(f(x))
 	
-	# @capture(expr, function fdecl__ end) || error("Couldnt capture function")
-	# @capture(fdecl[1], fname_(fargs__) where Targs_) || error("Couldnt function signature")
-	
-	@capture(fexpr, function fname_(fargs__) where Targs_ fbody__ end)
+	@capture(fexpr, function fname_(fargs__) where Targs__ fbody__ end)
 	
 	originArgs = fargs[:]
 	builtinArgs = [:(@builtin global_invocation_id => global_id::Vec3{UInt32})]
@@ -42,7 +39,7 @@ function wgpu(f, x)
 	# Since kernels can have more than one input
 	# we need to accomodate for that.
 	
-    code = quote 
+    code = quote
 		struct IOArray
 			data::WArray{$T}
 		end
@@ -61,7 +58,7 @@ function wgpu(f, x)
     
     """
 	
-	code = quote 
+	code = quote
 		struct IOArray
 			data::WArray{$T}
 		end
@@ -74,7 +71,7 @@ function wgpu(f, x)
 			$((cntxt.stmnts)...)
 		end
 	end
-
+	
 	push!(code.args, cntxt.globals...)
 	
     push!(code.args,
@@ -84,8 +81,14 @@ function wgpu(f, x)
     return code
 end
 
-macro wgpu(expr, x)
-	wgpu(expr, x)
+macro tt(func)
+	@show func
+	fexpr = @code_expr(call(func))
+end
+
+macro wgpukernel(workgroupsizeExpr, dispatchExpr, func)
+	@capture(func, f_(x_))
+	wgpu(workgroupsizeExpr, dispatchExpr, func)
 end
 
 mutable struct KernelContext
@@ -95,16 +98,16 @@ mutable struct KernelContext
 	typeargs::Array{Symbol}
 	stmnts::Array{Expr}
 	globals::Array{Expr}
-	indent::Int
+	indent::Int # Helps debugging
+	kernel # TODO function body with all statements will reside here
 end
 
 # @forward KernelContext.args push!
-
 function emitWGSLJuliaBody(fbody, inargs)
 	ins = Dict{Symbol, Any}()
 	outs = Dict{Symbol, Any}()
-
-	cntxt = KernelContext(ins, outs, Symbol[], Symbol[], Expr[], Expr[], 0)
+	
+	cntxt = KernelContext(ins, outs, Symbol[], Symbol[], Expr[], Expr[], 0, nothing)
 	
 	for (idx, arg) in enumerate(inargs)
 		if @capture(arg, a_::b_)
@@ -117,10 +120,10 @@ function emitWGSLJuliaBody(fbody, inargs)
 			@error "Could not capture input arguments"
 		end
 	end
-
+	
 	# TODO this is stupid but good first implementation maybe
 	# This assumes that the output argument is lhs of last stmnt
-	if @capture(fbody[end], a_=b_)
+	if @capture(fbody[end], a_[b_] = c_) || @capture(fbody[end], a_=b_)
 		idx = length(ins)
 		iovar = Symbol(:ouput, idx)
 		outs[a] = iovar
@@ -128,10 +131,10 @@ function emitWGSLJuliaBody(fbody, inargs)
 			@var StorageReadWrite 0 $(idx) $(iovar)::IOArray
 		end)
 	elseif false
-		# TODO others like return
-		# TODO others like just symbol
+		# TODO captures others like return statements
+		# TODO or just symbol
 	end
-
+	
 	wgslFunctionStatements(cntxt, fbody)
 	cntxt
 end
@@ -141,20 +144,20 @@ function wgslAssignment(expr::Expr, prefix::Union{Nothing, Symbol})
 	return ifelse(prefix==:let, :(@let $a = $b), :($a = $b))
 end
 
+
 function wgslFunctionStatements(cntxt, stmnts)
 	for (i, stmnt) in enumerate(stmnts)
 		wgslFunctionStatement(cntxt, stmnt; isLast=(length(stmnts) == i))
 	end
 end
 
-function resolveInOutVars(cntxt, expr)
-	
-end
-
 function wgslFunctionStatement(cntxt::KernelContext, stmnt; isLast = false)
-	if @capture(stmnt, a_ = b_)
+	if @capture(stmnt, a_[b_] = c_)
+		stmnt = :($(wgslFunctionStatement(cntxt, a))[$(wgslFunctionStatement(cntxt, b))] = $(wgslFunctionStatement(cntxt, c)))
+		push!(cntxt.stmnts, wgslAssignment(stmnt, nothing))
+	elseif @capture(stmnt, a_ = b_)
 		if (a in cntxt.tmpargs) && !(a in cntxt.inargs |> keys) && !(a in cntxt.outargs |> keys)
-			stmnt = :($(wgslFunctionStatement(a)) = $(wgslFunctionStatement(b)))
+			stmnt = :($(wgslFunctionStatement(cntxt, a)) = $(wgslFunctionStatement(cntxt, b)))
 			push!(cntxt.stmnts, wgslAssignment(stmnt, nothing))
 		else
 			push!(cntxt.tmpargs, a)
@@ -164,7 +167,7 @@ function wgslFunctionStatement(cntxt::KernelContext, stmnt; isLast = false)
 	elseif @capture(stmnt, a_.b_)
 		return :($(wgslFunctionStatement(cntxt, a)).$b)
 	elseif typeof(stmnt) == Symbol
-		if stmnt == :globalId # TODO
+		if stmnt == :globalId # TODO 
 			return :global_id
 		elseif stmnt == :localId
 			return :local_id
@@ -172,10 +175,10 @@ function wgslFunctionStatement(cntxt::KernelContext, stmnt; isLast = false)
 		if stmnt in cntxt.tmpargs && !(stmnt in cntxt.inargs |> keys) && !(stmnt in cntxt.outargs |> keys)
 			return stmnt
 		elseif (stmnt in cntxt.inargs |> keys)
-			return cntxt.inargs[stmnt]
+			return :($(cntxt.inargs[stmnt]).data)
 		elseif (stmnt in cntxt.outargs |> keys)
 			iovar = Symbol(:output, length(cntxt.outargs |> keys) + 1)
-			return cntxt.outargs[stmnt]
+			return :($(cntxt.outargs[stmnt]).data)
 		else
 			@error "Something is not right with $stmnt expr"
 		end
@@ -222,3 +225,125 @@ function wgslFunctionStatement(cntxt::KernelContext, stmnt; isLast = false)
 	end
 end
 
+function compileShader(f, x::WgpuArray{T, N}) where {T, N}
+	shaderSrc = getShaderCode(f, x)
+	cShader = nothing
+	try
+		cShader = createShaderObj(WGPUCompute.getWgpuDevice(), shaderSrc; savefile=true)
+	catch(e)
+		@info e
+		rethrow(e)
+	end
+	@info cShader.src
+	task_local_storage((nameof(f), :shader, T, N, size(x)), cShader)
+	return cShader
+end
+
+function preparePipeline(f, x::WgpuArray{T, N}, y::WgpuArray{T, N}) where {T, N}
+	@info f x y
+	@info typeof(f)
+	gpuDevice = WGPUCompute.getWgpuDevice()
+	cShader = get!(task_local_storage(), (nameof(f), :shader, T, size(x))) do
+		compileShader(f, x)
+	end
+	bindingLayouts = []
+	bindings = []
+	append!(bindingLayouts, getBindingLayouts(Val(nameof(f)); binding=0))
+	append!(bindings, getBindings(Val(nameof(f)), x, y; binding=0))
+	(bindGroupLayouts, bindGroup) = WGPUCore.makeBindGroupAndLayout(
+		gpuDevice,
+		bindingLayouts,
+		bindings
+	)
+	pipelineLayout = WGPUCore.createPipelineLayout(gpuDevice, "PipeLineLayout", bindGroupLayouts)
+	computeStage = WGPUCore.createComputeStage(cShader.internal[], nameof(f) |> string)
+	computePipeline = WGPUCore.createComputePipeline(gpuDevice, "computePipeline", pipelineLayout, computeStage)
+	task_local_storage((nameof(f), :bindgrouplayout, T, size(x)), bindGroupLayouts)
+	task_local_storage((nameof(f), :bindings, T, size(x)), bindings)
+	task_local_storage((nameof(f), :bindinglayouts, T, size(x)), bindingLayouts)
+	task_local_storage((nameof(f), :layout, T, size(x)), pipelineLayout)
+	task_local_storage((nameof(f), :pipeline, T, size(x)), computePipeline)
+	task_local_storage((nameof(f), :bindgroup, T, size(x)), bindGroup)
+	task_local_storage((nameof(f), :computestage, T, size(x)), computeStage)
+end
+
+# TODO this function has to be generated based on
+# input and output buffers
+function getBindingLayouts(::Val{:Relu}; binding=0)
+	bindingLayouts = [
+		WGPUCore.WGPUBufferEntry => [
+			:binding => binding,
+			:visibility => "Compute",
+			:type => "Storage"
+		],
+		WGPUCore.WGPUBufferEntry => [
+			:binding => binding + 1,
+			:visibility => "Compute",
+			:type => "Storage"
+		]
+	]
+end
+
+# TODO this function has to be generated based on
+# input and output buffers
+function getBindings(::Val{:Relu}, x, y; binding=0)
+	bindings = [
+		WGPUCore.GPUBuffer => [
+			:binding => binding,
+			:buffer => x.storageBuffer,
+			:offset => 0,
+			:size => reduce(*, (x |> size)) * sizeof(eltype(x))
+		],
+		WGPUCore.GPUBuffer => [
+			:binding => binding + 1,
+			:buffer => y.storageBuffer,
+			:offset => 0,
+			:size => reduce(*, (y |> size)) * sizeof(eltype(x))
+		],
+	]
+end
+
+function compute(f, x::WgpuArray{T, N}) where {T, N}
+	gpuDevice = WGPUCompute.getWgpuDevice()
+	commandEncoder = WGPUCore.createCommandEncoder(gpuDevice, "Command Encoder")
+	computePass = WGPUCore.beginComputePass(commandEncoder)
+	WGPUCore.setPipeline(computePass, task_local_storage((f, :pipeline, T, size(x))))
+	WGPUCore.setBindGroup(computePass, 0, task_local_storage((f, :bindgroup, T, size(x))), UInt32[], 0, 99999)
+	WGPUCore.dispatchWorkGroups(computePass, size(x)...)
+	WGPUCore.endComputePass(computePass)
+	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(commandEncoder),])
+end
+
+function kernelFunc(funcsig)
+	if @capture(funcsig, f_(x_))
+		kernelfunc = quote
+			function $f(x::WgpuArray{T, N}) where {T, N}
+				# x = getproperty(Main, Symbol($x)) # TODO Main is limiting # TODO deal with array of inputs later
+				y = similar(x) # TODO we can have multiple outputs (interesting too)
+				$preparePipeline($f, x, y)
+				$compute($f, x)
+				return y
+			end
+		end
+		return esc(kernelfunc)
+	elseif 	@capture(funcsig, function fname_(fargs__) where Targs__ fbody__ end)
+		ff = eval(funcsig)
+		# x = WgpuArray(rand(32, 32, 4) .|> Float32);
+		# @code_expr(ff(x))
+		kernelfunc = quote
+			function $fname(x::WgpuArray{T, N}) where {T, N}
+				y = similar(x)
+				$preparePipeline($fname, x, y)
+				$compute($fname, x)
+				return y
+			end
+		end
+		return esc(kernelfunc)
+	else
+		error("Couldnt capture function")
+	end
+end
+
+macro kernel(expr)
+	kernelFunc(expr)
+end
