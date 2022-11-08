@@ -30,3 +30,56 @@ BenchmarkTools.Trial: 403 samples with 1 evaluation.
 
  Memory estimate: 3.06 KiB, allocs estimate: 96.
  ```
+
+
+```julia
+
+julia> using WGPUCompute
+
+julia> using MacroTools
+
+julia> y = WgpuArray((rand(4, 4, 1) .-0.5) .|> Float32);
+
+julia> using WGPUCompute
+
+julia> using MacroTools
+
+julia> y = WgpuArray((rand(4, 4, 1) .-0.5) .|> Float32)
+4×4×1 WgpuArray{Float32, 3}:
+[:, :, 1] =
+ -0.383893   0.16837     0.0140184   0.199563
+ -0.336961  -0.192162   -0.179518   -0.0335313
+  0.444875   0.0344275  -0.100446    0.498892
+ -0.354451  -0.488507   -0.078437   -0.132585
+
+julia> @kernel function Relu(x::WgpuArray{T, N}) where {T, N}
+               gIdx = globalId.x * globalId.y + globalId.z
+               value = x[gIdx]
+               out[gIdx] = max(value, 0.0)
+       end
+WARNING: Method definition Relu(WGPUCompute.WgpuArray{T, N}) where {T, N} in module Main at REPL[26]:1 overwritten on the same line.
+Relu (generic function with 1 method)
+
+julia> Relu(y)
+┌ Info:
+│ struct IOArray {
+│     data:array<f32>
+│ };
+│
+│ @group(0) @binding(0) var<storage, read_write> input0:IOArray ;
+│ @group(0) @binding(1) var<storage, read_write> ouput1:IOArray ;
+│ @compute @workgroup_size(8, 8, 4)
+│ fn Relu(@builtin(global_invocation_id) global_id:vec3<u32>) {
+│     let gIdx = global_id.x * global_id.y+global_id.z;
+│     let value = input0.data[gIdx];
+│     ouput1.data[gIdx] = max(value, 0.0);
+│ }
+└
+4×4×1 WgpuArray{Float32, 3}:
+[:, :, 1] =
+ 0.0       0.16837    0.0140184  0.199563
+ 0.0       0.0        0.0        0.0
+ 0.444875  0.0344275  0.0        0.498892
+ 0.0       0.0        0.0        0.0
+
+```
