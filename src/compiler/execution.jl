@@ -15,7 +15,6 @@ There is one supported keyword argument that influences the behavior of `@wgpu`.
 """
 
 using MacroTools
-using Revise
 using CodeTracking
 using Lazy
 
@@ -24,11 +23,8 @@ using WGPUCompute
 
 function getShaderCode(f, x)
 	T = eltype(x)
-	@info T
-	# f = getproperty(Main, f) # TODO limiting to Main is not good
-	fexpr = @code_expr(f(x))
-	
-	@capture(fexpr, function fname_(fargs__) where Targs__ fbody__ end)
+	fexpr = @code_string(f(x)) |> Meta.parse
+	@capture(fexpr, @kernel function fname_(fargs__) where Targs__ fbody__ end)
 	
 	originArgs = fargs[:]
 	builtinArgs = [:(@builtin global_invocation_id => global_id::Vec3{UInt32})]
@@ -235,16 +231,14 @@ function compileShader(f, x::WgpuArray{T, N}) where {T, N}
 		rethrow(e)
 	end
 	@info cShader.src
-	task_local_storage((nameof(f), :shader, T, N, size(x)), cShader)
+	task_local_storage((f, :shader, T, N, size(x)), cShader)
 	return cShader
 end
 
 function preparePipeline(f, x::WgpuArray{T, N}, y::WgpuArray{T, N}) where {T, N}
-	@info f x y
-	@info typeof(f)
 	gpuDevice = WGPUCompute.getWgpuDevice()
-	cShader = get!(task_local_storage(), (nameof(f), :shader, T, size(x))) do
-		compileShader(f, x)
+	cShader = get!(task_local_storage(), (f, :shader, T, size(x))) do
+		compileShader(f,  x)
 	end
 	bindingLayouts = []
 	bindings = []
@@ -256,7 +250,7 @@ function preparePipeline(f, x::WgpuArray{T, N}, y::WgpuArray{T, N}) where {T, N}
 		bindings
 	)
 	pipelineLayout = WGPUCore.createPipelineLayout(gpuDevice, "PipeLineLayout", bindGroupLayouts)
-	computeStage = WGPUCore.createComputeStage(cShader.internal[], nameof(f) |> string)
+	computeStage = WGPUCore.createComputeStage(cShader.internal[], f |> string)
 	computePipeline = WGPUCore.createComputePipeline(gpuDevice, "computePipeline", pipelineLayout, computeStage)
 	task_local_storage((nameof(f), :bindgrouplayout, T, size(x)), bindGroupLayouts)
 	task_local_storage((nameof(f), :bindings, T, size(x)), bindings)
@@ -307,15 +301,15 @@ function compute(f, x::WgpuArray{T, N}) where {T, N}
 	gpuDevice = WGPUCompute.getWgpuDevice()
 	commandEncoder = WGPUCore.createCommandEncoder(gpuDevice, "Command Encoder")
 	computePass = WGPUCore.beginComputePass(commandEncoder)
-	WGPUCore.setPipeline(computePass, task_local_storage((f, :pipeline, T, size(x))))
-	WGPUCore.setBindGroup(computePass, 0, task_local_storage((f, :bindgroup, T, size(x))), UInt32[], 0, 99999)
+	WGPUCore.setPipeline(computePass, task_local_storage((nameof(f), :pipeline, T, size(x))))
+	WGPUCore.setBindGroup(computePass, 0, task_local_storage((nameof(f), :bindgroup, T, size(x))), UInt32[], 0, 99999)
 	WGPUCore.dispatchWorkGroups(computePass, size(x)...)
 	WGPUCore.endComputePass(computePass)
 	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(commandEncoder),])
 end
 
-function kernelFunc(funcsig)
-	if @capture(funcsig, f_(x_))
+function kernelFunc(funcExpr)
+	if @capture(funcExpr, f_(x_))
 		kernelfunc = quote
 			function $f(x::WgpuArray{T, N}) where {T, N}
 				# x = getproperty(Main, Symbol($x)) # TODO Main is limiting # TODO deal with array of inputs later
@@ -326,15 +320,12 @@ function kernelFunc(funcsig)
 			end
 		end
 		return esc(kernelfunc)
-	elseif 	@capture(funcsig, function fname_(fargs__) where Targs__ fbody__ end)
-		ff = eval(funcsig)
-		# x = WgpuArray(rand(32, 32, 4) .|> Float32);
-		# @code_expr(ff(x))
+	elseif 	@capture(funcExpr, function fname_(fargs__) where Targs__ fbody__ end)
 		kernelfunc = quote
 			function $fname(x::WgpuArray{T, N}) where {T, N}
 				y = similar(x)
-				$preparePipeline($fname, x, y)
-				$compute($fname, x)
+				$preparePipeline($(funcExpr), x, y)
+				$compute($(funcExpr), x)
 				return y
 			end
 		end
