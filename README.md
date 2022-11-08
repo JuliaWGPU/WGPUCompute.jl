@@ -53,25 +53,27 @@ WARNING: Method definition Relu(WGPUCompute.WgpuArray{T, N}) where {T, N} in mod
 Relu (generic function with 1 method)
 
 julia> Relu(y)
-┌ Info:
-│ struct IOArray {
-│     data:array<f32>
-│ };
-│
-│ @group(0) @binding(0) var<storage, read_write> input0:IOArray ;
-│ @group(0) @binding(1) var<storage, read_write> ouput1:IOArray ;
-│ @compute @workgroup_size(8, 8, 4)
-│ fn Relu(@builtin(global_invocation_id) global_id:vec3<u32>) {
-│     let gIdx = global_id.x * global_id.y+global_id.z;
-│     let value = input0.data[gIdx];
-│     ouput1.data[gIdx] = max(value, 0.0);
-│ }
-└
 4×4×1 WgpuArray{Float32, 3}:
 [:, :, 1] =
  0.0       0.16837    0.0140184  0.199563
  0.0       0.0        0.0        0.0
  0.444875  0.0344275  0.0        0.498892
  0.0       0.0        0.0        0.0
+
+> Internally compute shader is generated like below for Relu
+ ┌ Info:
+ │ struct IOArray {
+ │     data:array<f32>
+ │ };
+ │
+ │ @group(0) @binding(0) var<storage, read_write> input0:IOArray ;
+ │ @group(0) @binding(1) var<storage, read_write> ouput1:IOArray ;
+ │ @compute @workgroup_size(8, 8, 4)
+ │ fn Relu(@builtin(global_invocation_id) global_id:vec3<u32>) {
+ │     let gIdx = global_id.x * global_id.y+global_id.z;
+ │     let value = input0.data[gIdx];
+ │     ouput1.data[gIdx] = max(value, 0.0);
+ │ }
+ └
 
 ```
