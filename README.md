@@ -36,14 +36,6 @@ BenchmarkTools.Trial: 403 samples with 1 evaluation.
 
 julia> using WGPUCompute
 
-julia> using MacroTools
-
-julia> y = WgpuArray((rand(4, 4, 1) .-0.5) .|> Float32);
-
-julia> using WGPUCompute
-
-julia> using MacroTools
-
 julia> y = WgpuArray((rand(4, 4, 1) .-0.5) .|> Float32)
 4×4×1 WgpuArray{Float32, 3}:
 [:, :, 1] =
