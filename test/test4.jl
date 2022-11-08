@@ -1,12 +1,13 @@
 using WGPUCompute
+using MacroTools
 
-y = WgpuArray((rand(32, 32, 4) .-0.5) .|> Float32);
+y = WgpuArray((rand(4, 4, 1) .-0.5) .|> Float32);
 
-@macroexpand @kernel function Relu(x::WgpuArray{T, N}) where {T, N}
+(@macroexpand @kernel function Relu(x::WgpuArray{T, N}) where {T, N}
 	gIdx = globalId.x * globalId.y + globalId.z
 	value = x[gIdx]
 	out[gIdx] = max(value, 0.0)
-end
+end) |> MacroTools.striplines
 
 @kernel function Relu(x::WgpuArray{T, N}) where {T, N}
 	gIdx = globalId.x * globalId.y + globalId.z
