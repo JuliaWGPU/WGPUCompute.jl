@@ -178,6 +178,8 @@ function wgslFunctionStatement(cntxt::KernelContext, stmnt; isLast = false)
 		else
 			@error "Something is not right with $stmnt expr"
 		end
+	elseif typeof(stmnt) <: Number
+		return stmnt
 	elseif @capture(stmnt, a_[b_])
 		asub = wgslFunctionStatement(cntxt, a)
 		bsub = wgslFunctionStatement(cntxt, b)
@@ -203,7 +205,8 @@ function wgslFunctionStatement(cntxt::KernelContext, stmnt; isLast = false)
 			return :($f($x, $y))
 		end
 	elseif @capture(stmnt, f_(x__))
-		return :($f(($x...)))
+		x = tuple(x...)
+		return :($f($(x...)))
 	elseif @capture(stmnt, return t_)
 		push!(cntxt.stmnts, (wgslType(t)))
 	elseif @capture(stmnt, if cond_ ifblock__ end)

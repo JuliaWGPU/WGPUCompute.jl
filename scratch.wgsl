@@ -9,6 +9,6 @@ struct IOArray {
 fn Relu(@builtin(global_invocation_id) global_id:vec3<u32>) { 
     let gIdx = global_id.x * global_id.y+global_id.z;
     let value = input0.data[gIdx];
-    ouput1.data[gIdx] = max(value, 0.0);
+    ouput1.data[gIdx] = sin(2.0);
 }
 
