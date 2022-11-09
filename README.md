@@ -77,3 +77,14 @@ julia> Relu(y)
  └
 
 ```
+
+## Issues in example above.
+- globalDim is not supported yet. As a temporary fix global_id.y is used.
+- in generated shader code, @workgroup_size is hardcoded.
+
+## Known issues
+
+- Currently kernel macro has hardcoded sections and would expect :Relu as main function name. And it is
+ being currently worked on.
+- Doesn't have an api to pass @workgroup_size and @dispath_size yet. The example above is hardcoded.
+
