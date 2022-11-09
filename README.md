@@ -60,6 +60,8 @@ julia> Relu(y)
  0.444875  0.0344275  0.0        0.498892
  0.0       0.0        0.0        0.0
 
+```
+
 > Internally compute shader is generated like below for Relu
  ┌ Info:
  │ struct IOArray {
@@ -76,8 +78,6 @@ julia> Relu(y)
  │ }
  └
 
-```
-
 ## Issues in example above.
 - globalDim is not supported yet. As a temporary fix global_id.y is used.
 - in generated shader code, @workgroup_size is hardcoded.
@@ -87,4 +87,6 @@ julia> Relu(y)
 - Currently kernel macro has hardcoded sections and would expect :Relu as main function name. And it is
  being currently worked on.
 - Doesn't have an api to pass @workgroup_size and @dispath_size yet. The example above is hardcoded.
+- jupyter notebooks are not supported yet because of some softscope issues.
+
 
