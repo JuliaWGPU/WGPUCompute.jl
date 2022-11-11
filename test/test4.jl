@@ -12,7 +12,7 @@ end) |> MacroTools.striplines
 @kernel function Relu(x::WgpuArray{T, N}) where {T, N}
 	gIdx = globalId.x * globalId.y + globalId.z
 	value = x[gIdx]
-	out[gIdx] = sin(2.0)
+	out[gIdx] = max(value, 0.0)
 end
 
 Relu(y)
