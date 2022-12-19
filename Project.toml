@@ -23,6 +23,7 @@ WGSLTypes = "8cf5275a-6167-4820-ac24-74d7d0e6cf05"
 
 [compat]
 Adapt = "^3.4"
+CodeTracking = "1"
 ExprTools = "^0.1"
 GPUArrays = "^8.5"
 GPUCompiler = "^0.16"
