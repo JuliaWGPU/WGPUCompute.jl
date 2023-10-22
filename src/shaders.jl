@@ -6,20 +6,20 @@ export createShaderObj
 struct ShaderObj
 	src
 	internal
-	descriptor
+	info
 end
 
 
-function createShaderObj(gpuDevice, shaderSource; savefile=true, debug = true)
+function createShaderObj(gpuDevice, shaderSource; savefile=false, debug = false)
 	shaderSource = shaderSource |> wgslCode 
 	shaderBytes  = shaderSource |> Vector{UInt8}
 
-	descriptor = WGPUCore.loadWGSL(shaderBytes) |> first
+	shaderInfo = WGPUCore.loadWGSL(shaderBytes)
 
 	if savefile
+		# TODO this is not necessary anymore @stage can be safely removed
 		shaderSource = replace(shaderSource, "@stage(fragment)"=>"@fragment")
 		shaderSource = replace(shaderSource, "@stage(vertex)"=>"@vertex")
-		shaderSource = replace(shaderSource, "@stage(compute)"=>"@compute")
 		file = open("scratch.wgsl", "w")
 		write(file, shaderSource)
 		close(file)
@@ -30,14 +30,14 @@ function createShaderObj(gpuDevice, shaderSource; savefile=true, debug = true)
 		WGPUCore.createShaderModule(
 			gpuDevice,
 			"shaderCode",
-			descriptor,
+			shaderInfo.shaderModuleDesc,
 			nothing,
 			nothing
 		) |> Ref,
-		descriptor
+		shaderInfo
 	)
 
-	if debug || savefile
+	if debug
 		if shaderObj.internal[].internal[] == Ptr{Nothing}()
 			@error "Shader Obj creation failed"
 			@info "Dumping shader to scratch.wgsl"

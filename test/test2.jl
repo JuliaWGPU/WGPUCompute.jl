@@ -3,7 +3,7 @@ using WGPUCompute
 using Debugger
 using WGPUCore
 
-WGPUCore.SetLogLevel(WGPUCore.WGPULogLevel_Off)
+WGPUCore.SetLogLevel(WGPUCore.WGPULogLevel_Debug)
 
 using WGSLTypes
 

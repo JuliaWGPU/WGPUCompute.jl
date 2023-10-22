@@ -247,20 +247,15 @@ function preparePipeline(f, x::WgpuArray{T, N}, y::WgpuArray{T, N}) where {T, N}
 	bindings = []
 	append!(bindingLayouts, getBindingLayouts(Val(nameof(f)); binding=0))
 	append!(bindings, getBindings(Val(nameof(f)), x, y; binding=0))
-	(bindGroupLayouts, bindGroup) = WGPUCore.makeBindGroupAndLayout(
-		gpuDevice,
-		bindingLayouts,
-		bindings
-	)
-	pipelineLayout = WGPUCore.createPipelineLayout(gpuDevice, "PipeLineLayout", bindGroupLayouts)
+	pipelineLayout = WGPUCore.createPipelineLayout(gpuDevice, "PipeLineLayout", bindingLayouts, bindings)
 	computeStage = WGPUCore.createComputeStage(cShader.internal[], f |> string)
 	computePipeline = WGPUCore.createComputePipeline(gpuDevice, "computePipeline", pipelineLayout, computeStage)
-	task_local_storage((nameof(f), :bindgrouplayout, T, size(x)), bindGroupLayouts)
+	# task_local_storage((nameof(f), :bindgrouplayout, T, size(x)), bindGroupLayouts)
 	task_local_storage((nameof(f), :bindings, T, size(x)), bindings)
 	task_local_storage((nameof(f), :bindinglayouts, T, size(x)), bindingLayouts)
 	task_local_storage((nameof(f), :layout, T, size(x)), pipelineLayout)
 	task_local_storage((nameof(f), :pipeline, T, size(x)), computePipeline)
-	task_local_storage((nameof(f), :bindgroup, T, size(x)), bindGroup)
+	task_local_storage((nameof(f), :bindgroup, T, size(x)), pipelineLayout.bindGroup)
 	task_local_storage((nameof(f), :computestage, T, size(x)), computeStage)
 end
 

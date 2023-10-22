@@ -1,9 +1,9 @@
+using Revise
 using WGPUCompute
 using Debugger
 using WGPUCore
 using MacroTools
 using CodeTracking
-using Revise
 
 using WGPUCompute: getShaderCode
 
@@ -15,7 +15,7 @@ y = WgpuArray(rand(256, 256, 32) .- 0.5 .|> Float32);
 
 relu = ReLULayer{Float32}()
 
-src = MacroTools.striplines(getShaderCode(:relu, y))
+src = MacroTools.striplines(getShaderCode(relu, y))
 
 dump(src)
 
@@ -35,9 +35,9 @@ end
 
 cntxt = emitWGSLJuliaBody(fbody, args)
 
-getShaderCode(:Relu, y) |> MacroTools.striplines
+getShaderCode(relu, y) |> MacroTools.striplines
 
-getShaderCode(:Relu, y) |> MacroTools.flatten |> MacroTools.striplines
+getShaderCode(relu, y) |> MacroTools.flatten |> MacroTools.striplines
 
 # using Debugger
 # 
