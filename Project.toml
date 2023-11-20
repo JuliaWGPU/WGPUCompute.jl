@@ -1,7 +1,7 @@
 name = "WGPUCompute"
 uuid = "494b1f74-06dd-4437-8477-4a86f2a8d703"
 authors = ["arhik <arhik23@gmail.com>"]
-version = "0.1.0"
+version = "0.1.1"
 
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
