@@ -1,18 +1,4 @@
-export @kernel, getShaderCode, emitWGSLJuliaBody
-
-"""
-@wgpu [kwargs...] func(args...)
-
-High-level interface for executing code on a GPU. The `@wgpu` macro should prefix a call,
-with `func` a callable function or object that should return nothing. It will be compiled to
-a Metal function upon first use, and to a certain extent arguments will be converted and
-managed automatically using `wgpuconvert`. Finally, a call to `wgpucall` is
-performed, creating a command buffer in the current global command queue then committing it.
-
-There is one supported keyword argument that influences the behavior of `@wgpu`.
-- `launch`: whether to launch this kernel, defaults to `true`. If `false` the returned
-  kernel object should be launched by calling it and passing arguments again.
-"""
+export @wgpukernel, getShaderCode, emitWGSLJuliaBody
 
 using MacroTools
 using CodeTracking
@@ -20,14 +6,17 @@ using Lazy
 
 # TODO remove
 using WGPUCompute
+using Infiltrator
 
-function getShaderCode(f, x)
-	T = eltype(x)
-	fexpr = @code_string(f(x)) |> Meta.parse
-	@capture(fexpr, @kernel function fname_(fargs__) where Targs__ fbody__ end)
+function getShaderCode(f, args::WgpuArray{T, N}...) where {T, N}
+	fexpr = @code_string(f(args...)) |> Meta.parse
+	@capture(fexpr, @wgpukernel function fname_(fargs__) where Targs__ fbody__ end)
 	
 	originArgs = fargs[:]
-	builtinArgs = [:(@builtin global_invocation_id => global_id::Vec3{UInt32})]
+	builtinArgs = [
+		:(@builtin(global_invocation_id, global_id::Vec3{UInt32})),
+		:(@builtin(num_workgroups, num_workgroups::Vec3{UInt32}))
+	]
 	
 	"""
 	
@@ -108,9 +97,12 @@ function emitWGSLJuliaBody(fbody, inargs)
 	for (idx, arg) in enumerate(inargs)
 		if @capture(arg, a_::b_)
 			iovar = Symbol(:input, idx-1)
-			push!(cntxt.globals, quote
-				@var StorageReadWrite 0 $(idx-1) $(iovar)::IOArray
-			end)
+			push!(
+				cntxt.globals,
+				quote
+					@var StorageReadWrite 0 $(idx-1) $(iovar)::IOArray
+				end
+			)
 			ins[a] = iovar
 		else
 			@error "Could not capture input arguments"
@@ -119,17 +111,20 @@ function emitWGSLJuliaBody(fbody, inargs)
 	
 	# TODO this is stupid but good first implementation maybe
 	# This assumes that the output argument is lhs of last stmnt
-	if @capture(fbody[end], a_[b_] = c_) || @capture(fbody[end], a_=b_)
-		idx = length(ins)
-		iovar = Symbol(:ouput, idx)
-		outs[a] = iovar
-		push!(cntxt.globals, quote
-			@var StorageReadWrite 0 $(idx) $(iovar)::IOArray
-		end)
-	elseif false
+	#if @capture(fbody[end], a_[b_] = c_) || @capture(fbody[end], a_=b_)
+	#	idx = length(ins)
+	#	iovar = Symbol(:output, idx)
+	#	outs[a] = iovar
+	#	push!(
+	#		cntxt.globals, 
+	#		quote
+	#			@var StorageReadWrite 0 $(idx) $(iovar)::IOArray
+	#		end
+	#	)
+	#elseif false
 		# TODO captures others like return statements
 		# TODO or just symbol
-	end
+	#end
 	
 	wgslFunctionStatements(cntxt, fbody)
 	cntxt
@@ -165,6 +160,8 @@ function wgslFunctionStatement(cntxt::KernelContext, stmnt; isLast = false)
 	elseif typeof(stmnt) == Symbol
 		if stmnt == :globalId # TODO 
 			return :global_id
+		elseif stmnt == :numWorkGroups # TODO 
+			return :num_workgroups
 		elseif stmnt == :localId
 			return :local_id
 		end
@@ -224,8 +221,8 @@ function wgslFunctionStatement(cntxt::KernelContext, stmnt; isLast = false)
 	end
 end
 
-function compileShader(f, x::WgpuArray{T, N}) where {T, N}
-	shaderSrc = getShaderCode(f, x)
+function compileShader(f, args::WgpuArray{T, N}...) where {T, N}
+	shaderSrc = getShaderCode(f, args...)
 	cShader = nothing
 	try
 		cShader = createShaderObj(WGPUCompute.getWgpuDevice(), shaderSrc; savefile=true)
@@ -234,74 +231,60 @@ function compileShader(f, x::WgpuArray{T, N}) where {T, N}
 		rethrow(e)
 	end
 	@info cShader.src
-	task_local_storage((f, :shader, T, N, size(x)), cShader)
+	task_local_storage((f, :shader, T, N, size.(args)), cShader)
 	return cShader
 end
 
-function preparePipeline(f, x::WgpuArray{T, N}, y::WgpuArray{T, N}) where {T, N}
+function preparePipeline(f, args::WgpuArray{T, N}...) where {T, N}
 	gpuDevice = WGPUCompute.getWgpuDevice()
-	cShader = get!(task_local_storage(), (f, :shader, T, size(x))) do
-		compileShader(f,  x)
+	cShader = get!(task_local_storage(), (f, :shader, T, size.(args))) do
+		compileShader(f, args...)
 	end
 	bindingLayouts = []
 	bindings = []
-	append!(bindingLayouts, getBindingLayouts(Val(nameof(f)); binding=0))
-	append!(bindings, getBindings(Val(nameof(f)), x, y; binding=0))
+	
+	for (binding, arg) in enumerate(args)
+		push!(bindingLayouts, 
+			WGPUCore.WGPUBufferEntry => [
+				:binding => binding - 1,
+				:visibility => "Compute",
+				:type => "Storage"
+			],
+		)
+	end
+
+	for (binding, arg) in enumerate(args)
+		push!(bindings, 
+			WGPUCore.GPUBuffer => [
+				:binding => binding - 1,
+				:buffer => arg.storageBuffer,
+				:offset => 0,
+				:size => reduce(*, (arg |> size)) * sizeof(eltype(arg))
+			],
+		)
+	end
+
+
+		
 	pipelineLayout = WGPUCore.createPipelineLayout(gpuDevice, "PipeLineLayout", bindingLayouts, bindings)
 	computeStage = WGPUCore.createComputeStage(cShader.internal[], f |> string)
 	computePipeline = WGPUCore.createComputePipeline(gpuDevice, "computePipeline", pipelineLayout, computeStage)
 	# task_local_storage((nameof(f), :bindgrouplayout, T, size(x)), bindGroupLayouts)
-	task_local_storage((nameof(f), :bindings, T, size(x)), bindings)
-	task_local_storage((nameof(f), :bindinglayouts, T, size(x)), bindingLayouts)
-	task_local_storage((nameof(f), :layout, T, size(x)), pipelineLayout)
-	task_local_storage((nameof(f), :pipeline, T, size(x)), computePipeline)
-	task_local_storage((nameof(f), :bindgroup, T, size(x)), pipelineLayout.bindGroup)
-	task_local_storage((nameof(f), :computestage, T, size(x)), computeStage)
+	task_local_storage((nameof(f), :bindings, T, size.(args)), bindings)
+	task_local_storage((nameof(f), :bindinglayouts, T, size.(args)), bindingLayouts)
+	task_local_storage((nameof(f), :layout, T, size.(args)), pipelineLayout)
+	task_local_storage((nameof(f), :pipeline, T, size.(args)), computePipeline)
+	task_local_storage((nameof(f), :bindgroup, T, size.(args)), pipelineLayout.bindGroup)
+	task_local_storage((nameof(f), :computestage, T, size.(args)), computeStage)
 end
 
-# TODO this function has to be generated based on
-# input and output buffers
-function getBindingLayouts(::Val{:Relu}; binding=0)
-	bindingLayouts = [
-		WGPUCore.WGPUBufferEntry => [
-			:binding => binding,
-			:visibility => "Compute",
-			:type => "Storage"
-		],
-		WGPUCore.WGPUBufferEntry => [
-			:binding => binding + 1,
-			:visibility => "Compute",
-			:type => "Storage"
-		]
-	]
-end
-
-# TODO this function has to be generated based on
-# input and output buffers
-function getBindings(::Val{:Relu}, x, y; binding=0)
-	bindings = [
-		WGPUCore.GPUBuffer => [
-			:binding => binding,
-			:buffer => x.storageBuffer,
-			:offset => 0,
-			:size => reduce(*, (x |> size)) * sizeof(eltype(x))
-		],
-		WGPUCore.GPUBuffer => [
-			:binding => binding + 1,
-			:buffer => y.storageBuffer,
-			:offset => 0,
-			:size => reduce(*, (y |> size)) * sizeof(eltype(x))
-		],
-	]
-end
-
-function compute(f, x::WgpuArray{T, N}) where {T, N}
+function compute(f, args::WgpuArray{T, N}...) where {T, N}
 	gpuDevice = WGPUCompute.getWgpuDevice()
 	commandEncoder = WGPUCore.createCommandEncoder(gpuDevice, "Command Encoder")
 	computePass = WGPUCore.beginComputePass(commandEncoder)
-	WGPUCore.setPipeline(computePass, task_local_storage((nameof(f), :pipeline, T, size(x))))
-	WGPUCore.setBindGroup(computePass, 0, task_local_storage((nameof(f), :bindgroup, T, size(x))), UInt32[], 0, 99999)
-	WGPUCore.dispatchWorkGroups(computePass, size(x)...)
+	WGPUCore.setPipeline(computePass, task_local_storage((nameof(f), :pipeline, T, size.(args))))
+	WGPUCore.setBindGroup(computePass, 0, task_local_storage((nameof(f), :bindgroup, T, size.(args))), UInt32[], 0, 99999)
+	WGPUCore.dispatchWorkGroups(computePass, size.(args)[1]...) # workgroup size needs work here
 	WGPUCore.endComputePass(computePass)
 	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(commandEncoder),])
 end
@@ -309,22 +292,20 @@ end
 function kernelFunc(funcExpr)
 	if @capture(funcExpr, f_(x_))
 		kernelfunc = quote
-			function $f(x::WgpuArray{T, N}) where {T, N}
+			function $f(args::WgpuArray{T, N}...) where {T, N}
 				# x = getproperty(Main, Symbol($x)) # TODO Main is limiting # TODO deal with array of inputs later
-				y = similar(x) # TODO we can have multiple outputs (interesting too)
-				$preparePipeline($f, x, y)
-				$compute($f, x)
-				return y
+				$preparePipeline($f, args...)
+				$compute($f, args...)
+				return nothing
 			end
 		end
 		return esc(kernelfunc)
 	elseif 	@capture(funcExpr, function fname_(fargs__) where Targs__ fbody__ end)
 		kernelfunc = quote
-			function $fname(x::WgpuArray{T, N}) where {T, N}
-				y = similar(x)
-				$preparePipeline($(funcExpr), x, y)
-				$compute($(funcExpr), x)
-				return y
+			function $fname(args::WgpuArray{T, N}...) where {T, N}
+				$preparePipeline($(funcExpr), args...)
+				$compute($(funcExpr), args...)
+				return nothing
 			end
 		end
 		return esc(kernelfunc)
@@ -333,6 +314,6 @@ function kernelFunc(funcExpr)
 	end
 end
 
-macro kernel(expr)
+macro wgpukernel(expr)
 	kernelFunc(expr)
 end
