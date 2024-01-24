@@ -10,12 +10,15 @@ using Infiltrator
 
 function getShaderCode(f, args::WgpuArray{T, N}...) where {T, N}
 	fexpr = @code_string(f(args...)) |> Meta.parse
-	@capture(fexpr, @wgpukernel workgroupSizes_ function fname_(fargs__) where Targs__ fbody__ end)
+	@capture(fexpr, @wgpukernel workgroupSizes_ workgroupCount_ function fname_(fargs__) where Targs__ fbody__ end)
 	workgroupSizes = Meta.eval(workgroupSizes)
+	workgroupCount = Meta.eval(workgroupCount)
 	originArgs = fargs[:]
 	builtinArgs = [
 		:(@builtin(global_invocation_id, global_id::Vec3{UInt32})),
-		:(@builtin(num_workgroups, num_workgroups::Vec3{UInt32}))
+		:(@builtin(local_invocation_id, local_id::Vec3{UInt32})),
+		:(@builtin(num_workgroups, num_workgroups::Vec3{UInt32})),
+		:(@builtin(workgroup_id, workgroup_id::Vec3{UInt32})),
 	]
 	
 	"""
@@ -66,6 +69,7 @@ function getShaderCode(f, args::WgpuArray{T, N}...) where {T, N}
     return code
 end
 
+"""
 macro tt(func)
 	@show func
 	fexpr = @code_expr(call(func))
@@ -75,6 +79,7 @@ macro wgpukernel(workgroupsizeExpr, dispatchExpr, func)
 	@capture(func, f_(x_))
 	wgpu(workgroupsizeExpr, dispatchExpr, func)
 end
+"""
 
 mutable struct KernelContext
 	inargs::Dict{Symbol, Any}
@@ -276,25 +281,25 @@ function preparePipeline(f, args::WgpuArray{T, N}...) where {T, N}
 	task_local_storage((nameof(f), :computestage, T, size.(args)), computeStage)
 end
 
-function compute(f, args::WgpuArray{T, N}...; workgroupSizes=()) where {T, N}
+function compute(f, args::WgpuArray{T, N}...; workgroupSizes=(), workgroupCount=()) where {T, N}
 	gpuDevice = WGPUCompute.getWgpuDevice()
 	commandEncoder = WGPUCore.createCommandEncoder(gpuDevice, "Command Encoder")
 	computePass = WGPUCore.beginComputePass(commandEncoder)
 	WGPUCore.setPipeline(computePass, task_local_storage((nameof(f), :pipeline, T, size.(args))))
 	WGPUCore.setBindGroup(computePass, 0, task_local_storage((nameof(f), :bindgroup, T, size.(args))), UInt32[], 0, 99999)
-	WGPUCore.dispatchWorkGroups(computePass, workgroupSizes...) # workgroup size needs work here
+	WGPUCore.dispatchWorkGroups(computePass, workgroupCount...) # workgroup size needs work here
 	WGPUCore.endComputePass(computePass)
 	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(commandEncoder),])
 end
 
-function kernelFunc(funcExpr; workgroupSizes=nothing)
-	@infiltrate
+function kernelFunc(funcExpr; workgroupSizes=nothing, workgroupCount=nothing)
 	workgroupSizes = Meta.eval(workgroupSizes)
+	workgroupCount = Meta.eval(workgroupCount)
 	if 	@capture(funcExpr, function fname_(fargs__) where Targs__ fbody__ end)
 		kernelfunc = quote
 			function $fname(args::WgpuArray{T, N}...) where {T, N}
 				$preparePipeline($(funcExpr), args...)
-				$compute($(funcExpr), args...; workgroupSizes=$workgroupSizes)
+				$compute($(funcExpr), args...; workgroupSizes=$workgroupSizes, workgroupCount=$workgroupCount)
 				return nothing
 			end
 		end
@@ -304,6 +309,6 @@ function kernelFunc(funcExpr; workgroupSizes=nothing)
 	end
 end
 
-macro wgpukernel(workgroupSizes, expr)
-	kernelFunc(expr; workgroupSizes=workgroupSizes)
+macro wgpukernel(workgroupSizes, workgroupCount, expr)
+	kernelFunc(expr; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount)
 end
