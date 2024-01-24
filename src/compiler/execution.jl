@@ -9,9 +9,10 @@ using WGPUCompute
 using Infiltrator
 
 function getShaderCode(f, args::WgpuArray{T, N}...) where {T, N}
+	@infiltrate
 	fexpr = @code_string(f(args...)) |> Meta.parse
-	@capture(fexpr, @wgpukernel function fname_(fargs__) where Targs__ fbody__ end)
-	
+	@capture(fexpr, @wgpukernel workgroupSizes_ function fname_(fargs__) where Targs__ fbody__ end)
+	workgroupSizes = Meta.eval(workgroupSizes)
 	originArgs = fargs[:]
 	builtinArgs = [
 		:(@builtin(global_invocation_id, global_id::Vec3{UInt32})),
@@ -60,7 +61,7 @@ function getShaderCode(f, args::WgpuArray{T, N}...) where {T, N}
 	push!(code.args, cntxt.globals...)
 	
     push!(code.args,
-		:(@compute @workgroupSize(8, 8, 4) $(fquote.args...))
+		:(@compute @workgroupSize($(workgroupSizes...)) $(fquote.args...))
    	)
 	
     return code
@@ -264,8 +265,6 @@ function preparePipeline(f, args::WgpuArray{T, N}...) where {T, N}
 		)
 	end
 
-
-		
 	pipelineLayout = WGPUCore.createPipelineLayout(gpuDevice, "PipeLineLayout", bindingLayouts, bindings)
 	computeStage = WGPUCore.createComputeStage(cShader.internal[], f |> string)
 	computePipeline = WGPUCore.createComputePipeline(gpuDevice, "computePipeline", pipelineLayout, computeStage)
@@ -289,18 +288,9 @@ function compute(f, args::WgpuArray{T, N}...) where {T, N}
 	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(commandEncoder),])
 end
 
-function kernelFunc(funcExpr)
-	if @capture(funcExpr, f_(x_))
-		kernelfunc = quote
-			function $f(args::WgpuArray{T, N}...) where {T, N}
-				# x = getproperty(Main, Symbol($x)) # TODO Main is limiting # TODO deal with array of inputs later
-				$preparePipeline($f, args...)
-				$compute($f, args...)
-				return nothing
-			end
-		end
-		return esc(kernelfunc)
-	elseif 	@capture(funcExpr, function fname_(fargs__) where Targs__ fbody__ end)
+function kernelFunc(funcExpr; workgroupSizes=())
+	@infiltrate
+	if 	@capture(funcExpr, function fname_(fargs__) where Targs__ fbody__ end)
 		kernelfunc = quote
 			function $fname(args::WgpuArray{T, N}...) where {T, N}
 				$preparePipeline($(funcExpr), args...)
@@ -314,6 +304,6 @@ function kernelFunc(funcExpr)
 	end
 end
 
-macro wgpukernel(expr)
-	kernelFunc(expr)
+macro wgpukernel(workgroupSizes, expr)
+	kernelFunc(expr, workgroupSizes=workgroupSizes)
 end
