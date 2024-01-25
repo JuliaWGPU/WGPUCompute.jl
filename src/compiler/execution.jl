@@ -45,15 +45,21 @@ function getShaderCode(f, args::WgpuArray{T, N}...) where {T, N}
     end
     
     """
-	
+    # TODO used `repeat` since `ones` is causing issues.
+    # interesting bug to raise.
+    if workgroupSizes |> length < 3
+    	workgroupSizes = (workgroupSizes..., repeat([1,], inner=(3 - length(workgroupSizes)))...)
+    end
+  
 	code = quote
+		@const workgroupDims = Vec3{Int32}($(workgroupSizes...))
 		struct IOArray
 			data::WArray{$T}
 		end
 	end
 	
 	cntxt = emitWGSLJuliaBody(fbody, fargs)
-	
+
 	fquote = quote
 		function $(fname)($(builtinArgs...))
 			$((cntxt.stmnts)...)
@@ -165,10 +171,14 @@ function wgslFunctionStatement(cntxt::KernelContext, stmnt; isLast = false)
 	elseif typeof(stmnt) == Symbol
 		if stmnt == :globalId # TODO 
 			return :global_id
-		elseif stmnt == :numWorkGroups # TODO 
+		elseif stmnt == :dispatchDims # TODO 
 			return :num_workgroups
 		elseif stmnt == :localId
 			return :local_id
+		elseif stmnt == :workgroupId
+			return :workgroup_id
+		elseif stmnt == :workgroupDims
+			return :num_workgroups
 		end
 		if stmnt in cntxt.tmpargs && !(stmnt in cntxt.inargs |> keys) && !(stmnt in cntxt.outargs |> keys)
 			return stmnt
