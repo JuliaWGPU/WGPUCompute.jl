@@ -1,4 +1,4 @@
-export @wgpukernel, getShaderCode, emitWGSLJuliaBody
+export @wgpukernel, getShaderCode
 
 using MacroTools
 using CodeTracking
@@ -47,9 +47,15 @@ function getShaderCode(f, args::WgpuArray...)
 	outs = Dict{Symbol, Any}()
 
 	cntxt = KernelContext(ins, outs, Symbol[], Symbol[], Expr[], Expr[], 0, nothing)
-
+	ins[:Targs] = Targs
 	ins[:workgroupDims] = :workgroupDims
-	
+
+	for (inArg, symbolArg) in zip(args, fargs)
+		if @capture(symbolArg, iovar_::ioType_{T_, N_})
+			ins[T] = eltype(inArg)
+			ins[N] = N
+		end
+	end
 	for (idx, (inarg, symbolarg)) in enumerate(zip(args, fargs))
 		@capture(symbolarg, iovar_::ioType_{T_, N_})
 		# TODO instead of assert we should branch for each case of argument
@@ -170,11 +176,16 @@ function wgslFunctionStatement(cntxt::KernelContext, stmnt; isLast = false)
 			x = wgslFunctionStatement(cntxt, x)
 			y = wgslFunctionStatement(cntxt, y)
 			return :($f($x, $y))
+		elseif f in cntxt.inargs[:Targs]
+			return cntxt.inargs[f]
 		else
 			return :($f($x, $y))
 		end
 	elseif @capture(stmnt, f_(x__))
 		x = tuple(x...)
+		if f in cntxt.inargs[:Targs]
+			return :($(cntxt.inargs[f])($(x...)))
+		end
 		return :($f($(x...)))
 	elseif @capture(stmnt, return t_)
 		push!(cntxt.stmnts, (wgslType(t)))

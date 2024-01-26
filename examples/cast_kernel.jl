@@ -6,7 +6,7 @@ using WGPUCompute
 	gIdx = workgroupId.x*xdim + localId.x
 	gIdy = workgroupId.y*ydim + localId.y
 	gId = xDims.x*gIdy + gIdx
-	out[gId] = UInt32(ceil(x[gId]))
+	out[gId] = S(ceil(x[gId]))
 end
 
 function cast(S::DataType, x::WgpuArray{T, N}) where {T, N}
