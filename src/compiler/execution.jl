@@ -39,13 +39,35 @@ function getShaderCode(f, args::WgpuArray...)
     end
   
 	code = quote
-		@const workgroupDims = Vec3{Int32}($(workgroupSizes...))
+		@const workgroupDims = Vec3{UInt32}($(UInt32.(workgroupSizes)...))
 	end
+
 	
 	ins = Dict{Symbol, Any}()
 	outs = Dict{Symbol, Any}()
 
 	cntxt = KernelContext(ins, outs, Symbol[], Symbol[], Expr[], Expr[], 0, nothing)
+
+	ins[:workgroupDims] = :workgroupDims
+	
+	for (idx, (inarg, symbolarg)) in enumerate(zip(args, fargs))
+		@capture(symbolarg, iovar_::ioType_{T_, N_})
+		# TODO instead of assert we should branch for each case of argument
+		@assert ioType == :WgpuArray "Expecting WgpuArray Type, received $ioType instead"
+		dimsVar = Symbol(iovar, :Dims)
+		dims = size(inarg)
+	    if dims |> length < 3
+    		dims = (dims..., repeat([1,], inner=(3 - length(dims)))...)
+    	end
+
+		push!(
+			cntxt.globals,
+			quote
+				@const $dimsVar = Vec3{UInt32}($(UInt32.(dims)...))
+			end
+		)
+		ins[dimsVar] = dimsVar
+	end
 	
 	for (idx, (inarg, symbolarg)) in enumerate(zip(args, fargs))
 		@capture(symbolarg, iovar_::ioType_{T_, N_})
@@ -114,8 +136,6 @@ function wgslFunctionStatement(cntxt::KernelContext, stmnt; isLast = false)
 			return :local_id
 		elseif stmnt == :workgroupId
 			return :workgroup_id
-		elseif stmnt == :workgroupDims
-			return :num_workgroups
 		end
 		if stmnt in cntxt.tmpargs && !(stmnt in cntxt.inargs |> keys) && !(stmnt in cntxt.outargs |> keys)
 			return stmnt
