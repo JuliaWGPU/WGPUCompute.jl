@@ -17,3 +17,6 @@ end
 
 x = WgpuArray{Float32}(rand(Float32, 8, 8) .- 0.5f0)
 z = cast(UInt32, x)
+
+# TODO Bool cast is not working yet
+#  y = cast(Bool, x)
