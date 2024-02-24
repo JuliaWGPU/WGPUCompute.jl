@@ -22,7 +22,7 @@ WGPUNative = "c14bfd16-04f9-4c2f-a915-b355584b5509"
 WGSLTypes = "8cf5275a-6167-4820-ac24-74d7d0e6cf05"
 
 [compat]
-Adapt = "^3.7"
+Adapt = "^3.7, 4"
 CodeTracking = "^1.3"
 ExprTools = "^0.1"
 GPUArrays = "^9.1"
