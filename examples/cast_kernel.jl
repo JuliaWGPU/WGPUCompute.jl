@@ -15,8 +15,8 @@ function cast(S::DataType, x::WgpuArray{T, N}) where {T, N}
 	return y
 end
 
-x = WgpuArray{Float32}(rand(Float32, 8, 8) .- 0.5f0)
+x = WgpuArray{Float32}(rand(Float32, 1024, 1024) .- 0.5f0)
 z = cast(UInt32, x)
 
 # TODO Bool cast is not working yet
-#  y = cast(Bool, x)
+# y = cast(Bool, x)

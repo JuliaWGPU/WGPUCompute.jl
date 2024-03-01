@@ -14,7 +14,7 @@ export WgpuArray
 
 function getCurrentDevice()
 	get!(task_local_storage(), :WGPUDevice) do
-		WGPUCore.getDefaultDevice()
+		WGPUCore.getDefaultDevice(nothing)
 	end
 end
 
