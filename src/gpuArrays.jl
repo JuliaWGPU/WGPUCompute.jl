@@ -1,7 +1,7 @@
 
 # GPUArrays.device(x::WgpuArray) = x.device
 
-gpuDevice = WGPUCore.getDefaultDevice()
+gpuDevice = WGPUCore.getDefaultDevice(nothing)
 
 struct WgpuDevice
 	device::WGPUCore.GPUDevice

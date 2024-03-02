@@ -61,7 +61,7 @@ function getShaderCode(activation::ReLULayer{T}, x::WgpuArray{T}) where T
 		@var StorageReadWrite 0 1 output0::IOArray
 		
 		@compute @workgroupSize(8, 8, 4) function main(@builtin global_invocation_id => global_id::Vec3{UInt32})
-			@let gIdx = global_id.x*global_id.y + global_id.z;
+			@let gIdx = globalId.x*globalId.y + globalId.z;
 			@let value = input0.data[gIdx]
 			output0.data[gIdx] = max(value, $(zero(eltype(activation))))
 		end
