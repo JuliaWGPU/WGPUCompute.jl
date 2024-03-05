@@ -141,7 +141,7 @@ mutable struct WgpuArray{T, N} <: AbstractGPUArray{T, N}
 		end
 
 		dev = getCurrentDevice()
-		
+
 		if bufsize > 0
 			storageData = Array{T}(undef, prod(dims))
 			(storageBuffer, _) = WGPUCore.createBufferWithData(
@@ -150,14 +150,14 @@ mutable struct WgpuArray{T, N} <: AbstractGPUArray{T, N}
 				storageData,
 				["Storage", "CopyDst", "CopySrc"],
 			)
+			bindGroup = nothing
+			computePipeline = nothing
+			obj = new(dims, storageData, maxSize, 0, storageBuffer, bindGroup, computePipeline)
+			finalizer(obj) do arr
+				obj = nothing
+			end
+			return obj
 		end
-		bindGroup = nothing
-		computePipeline = nothing
-		obj = new(dims, storageData, maxSize, 0, storageBuffer, bindGroup, computePipeline)
-		finalizer(obj) do arr
-			obj = nothing
-		end
-		return obj
 	end
 
 	function WgpuArray{T, N}(buffer::WgpuArray, dims::Dims{T}) where {T, N}
@@ -173,21 +173,26 @@ end
 Base.eltype(::Type{WgpuArray{T}}) where T = T
 Base.eltype(::Type{WgpuArray{T, N}}) where {T, N} = T
 
-# constructors (borrowed from WgpuArray for quick prototyping)
+# constructors (borrowed from CUDA.jl for quick prototyping)
 WgpuArray{T, N}(::UndefInitializer, dims::Integer...) where {T, N} = 
 	WgpuArray{T, N}(undef, Dims(dims))
+WgpuArray{T, N}(::UndefInitializer, dims::NTuple{N, Integer}) where {T, N} = 
+	WgpuArray{T, N}(undef, convert(Tuple{Vararg{Int}}, dims))
+WgpuArray{T, N}(::UndefInitializer, dims::Vararg{Integer, N}) where {T, N} =
+	WgpuArray{T, N}(undef, convert(Tuple{Vararg{Int}}, dims))
 
 # type but not dimensionality specified 
-WgpuArray{T}(::UndefInitializer, dims::Dims{N}) where {T, N} = WgpuArray{T, N}(undef, dims)
-WgpuArray{T}(::UndefInitializer, dims::Integer...) where T = 
-	WgpuArray{T}(undef, convert(Tuple{Vararg{Int}}, dims))
+WgpuArray{T}(::UndefInitializer, dims::NTuple{N, Integer}) where {T, N} = 
+	WgpuArray{T, N}(undef, convert(Tuple{Vararg{Int}}, dims))
+WgpuArray{T}(::UndefInitializer, dims::Vararg{Integer, N}) where {T, N} = 
+	WgpuArray{T, N}(undef, convert(Tuple{Vararg{Int}}, dims))
 
 # empty vector constructors
 WgpuArray{T, 1}() where {T} = WgpuArray{T, 1}(undef, 0)
 
 Base.similar(a::WgpuArray{T,N}) where {T,N} = WgpuArray{T,N}(undef, size(a))
-Base.similar(a::WgpuArray{T}, dims::Base.Dims{N}) where {T,N} = WgpuArray{T,N}(undef, dims)
-Base.similar(a::WgpuArray, ::Type{T}, dims::Base.Dims{N}) where {T,N} =
+Base.similar(a::WgpuArray{T, <:Any}, dims::Base.Dims{N}) where {T,N} = WgpuArray{T,N}(undef, dims)
+Base.similar(a::WgpuArray{<:Any, <:Any}, ::Type{T}, dims::Base.Dims{N}) where {T,N} =
   WgpuArray{T,N}(undef, dims)
 
 function Base.copy(a::WgpuArray{T,N}) where {T,N}
@@ -274,7 +279,6 @@ Base.collect(x::WgpuArray{T,N}) where {T,N} = copyto!(Array{T,N}(undef, size(x))
 device(array::WgpuArray) = array.storageBuffer.device
 
 ## memory copying
-
 function Base.copyto!(dest::WgpuArray{T}, doffs::Integer, src::Array{T}, soffs::Integer,
                       n::Integer) where T
   (n==0 || sizeof(T) == 0) && return dest
