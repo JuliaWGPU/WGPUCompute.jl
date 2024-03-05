@@ -10,7 +10,8 @@ using Adapt
 using Reexport
 using WGSLTypes
 
-WGPUCore.SetLogLevel(WGPUCore.WGPULogLevel_Debug)
+# TODO enable debug based on flags 
+# WGPUCore.SetLogLevel(WGPUCore.WGPULogLevel_Debug)
 
 include("state.jl")
 include("initialization.jl")

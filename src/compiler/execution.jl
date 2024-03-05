@@ -297,10 +297,6 @@ function wgpuCall(kernelObj::WGPUKernelObject, args...)
 	kernelObj.kernelFunc(args...)
 end
 
-#function wgpuKernel(f, args...)
-#	preparePipeline(f, args...)
-#end
-
 macro wgpukernel(launch, wgSize, wgCount, ex)
 	code = quote end
 	@gensym f_var kernel_f kernel_args kernel_tt kernel
