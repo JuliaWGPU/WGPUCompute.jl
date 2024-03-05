@@ -1,14 +1,19 @@
-export @wgpukernel, getShaderCode
+export @wgpukernel, getShaderCode, WGPUKernelObject, wgpuCall
 
 using MacroTools
 using CodeTracking
 using Lazy
+using Infiltrator
 
 # TODO remove
 using WGPUCompute
 using Infiltrator
 
-mutable struct KernelContext
+struct WGPUKernelObject
+	kernelFunc::Function
+end
+
+mutable struct KernelBuildContext
 	inargs::Dict{Symbol, Any}
 	outargs::Dict{Symbol, Any}
 	tmpargs::Array{Symbol}
@@ -19,11 +24,9 @@ mutable struct KernelContext
 	kernel # TODO function body with all statements will reside here
 end
 
-function getShaderCode(f, args::WgpuArray...)
+function getShaderCode(f, args::WgpuArray...; workgroupSizes=(), workgroupCount=())
 	fexpr = @code_string(f(args...)) |> Meta.parse
-	@capture(fexpr, @wgpukernel workgroupSizes_ workgroupCount_ function fname_(fargs__) where Targs__ fbody__ end)
-	workgroupSizes = Meta.eval(workgroupSizes)
-	workgroupCount = Meta.eval(workgroupCount)
+	@capture(fexpr, function fname_(fargs__) where Targs__ fbody__ end)
 	originArgs = fargs[:]
 	builtinArgs = [
 		:(@builtin(global_invocation_id, global_id::Vec3{UInt32})),
@@ -46,7 +49,7 @@ function getShaderCode(f, args::WgpuArray...)
 	ins = Dict{Symbol, Any}()
 	outs = Dict{Symbol, Any}()
 
-	cntxt = KernelContext(ins, outs, Symbol[], Symbol[], Expr[], Expr[], 0, nothing)
+	cntxt = KernelBuildContext(ins, outs, Symbol[], Symbol[], Expr[], Expr[], 0, nothing)
 	ins[:Targs] = Targs
 	ins[:workgroupDims] = :workgroupDims
 
@@ -118,7 +121,7 @@ function wgslFunctionStatements(cntxt, stmnts)
 	end
 end
 
-function wgslFunctionStatement(cntxt::KernelContext, stmnt; isLast = false)
+function wgslFunctionStatement(cntxt::KernelBuildContext, stmnt; isLast = false)
 	if @capture(stmnt, a_[b_] = c_)
 		stmnt = :($(wgslFunctionStatement(cntxt, a))[$(wgslFunctionStatement(cntxt, b))] = $(wgslFunctionStatement(cntxt, c)))
 		push!(cntxt.stmnts, wgslAssignment(stmnt, nothing))
@@ -204,8 +207,8 @@ function wgslFunctionStatement(cntxt::KernelContext, stmnt; isLast = false)
 	end
 end
 
-function compileShader(f, args::WgpuArray...)
-	shaderSrc = getShaderCode(f, args...)
+function compileShader(f, args::WgpuArray...; workgroupSizes=(), workgroupCount=())
+	shaderSrc = getShaderCode(f, args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount)
 	cShader = nothing
 	try
 		cShader = createShaderObj(WGPUCompute.getWgpuDevice(), shaderSrc; savefile=true)
@@ -218,10 +221,10 @@ function compileShader(f, args::WgpuArray...)
 	return cShader
 end
 
-function preparePipeline(f, args::WgpuArray...)
+function preparePipeline(f::Function, args::WgpuArray...; workgroupSizes=(), workgroupCount=())
 	gpuDevice = WGPUCompute.getWgpuDevice()
 	cShader = get!(task_local_storage(), (f, :shader, eltype.(args), size.(args))) do
-		compileShader(f, args...)
+		compileShader(f, args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount)
 	end
 	bindingLayouts = []
 	bindings = []
@@ -270,23 +273,53 @@ function compute(f, args::WgpuArray...; workgroupSizes=(), workgroupCount=())
 	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(commandEncoder),])
 end
 
-function kernelFunc(funcExpr; workgroupSizes=nothing, workgroupCount=nothing)
-	workgroupSizes = Meta.eval(workgroupSizes)
-	workgroupCount = Meta.eval(workgroupCount)
+function kernelFunc(funcExpr)
 	if 	@capture(funcExpr, function fname_(fargs__) where Targs__ fbody__ end)
 		kernelfunc = quote
-			function $fname(args::WgpuArray...)
+			function $fname(args::Tuple{WgpuArray}, workgroupSizes, workgroupCount)
 				$preparePipeline($(funcExpr), args...)
-				$compute($(funcExpr), args...; workgroupSizes=$workgroupSizes, workgroupCount=$workgroupCount)
+				$compute($(funcExpr), args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount)
 				return nothing
 			end
-		end
-		return esc(kernelfunc)
+		end |> unblock
+		return esc(quote $kernelfunc end)
 	else
 		error("Couldnt capture function")
 	end
 end
 
-macro wgpukernel(workgroupSizes, workgroupCount, expr)
-	kernelFunc(expr; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount)
+function getFunctionBlock(func, args)
+	fString = CodeTracking.definition(String, which(func, args))
+	return Meta.parse(fString |> first)
+end
+
+function wgpuCall(kernelObj::WGPUKernelObject, args...)
+	kernelObj.kernelFunc(args...)
+end
+
+#function wgpuKernel(f, args...)
+#	preparePipeline(f, args...)
+#end
+
+macro wgpukernel(launch, wgSize, wgCount, ex)
+	code = quote end
+	@gensym f_var kernel_f kernel_args kernel_tt kernel
+	if @capture(ex, fname_(fargs__))
+		(vars, var_exprs) = assign_args!(code, fargs)
+		push!(code.args, quote
+				$kernel_args = ($(var_exprs...),)
+				$kernel_tt = Tuple{map(Core.Typeof, $kernel_args)...}
+				kernel = function wgpuKernel(args...)
+					$preparePipeline($fname, args...; workgroupSizes=$wgSize, workgroupCount=$wgCount)
+					$compute($fname, args...; workgroupSizes=$wgSize, workgroupCount=$wgCount)
+				end
+				if $launch == true
+					wgpuCall(WGPUKernelObject(kernel), $(kernel_args)...)
+				else
+					WGPUKernelObject(kernel)
+				end
+			end
+		)
+	end
+	return esc(code)
 end
