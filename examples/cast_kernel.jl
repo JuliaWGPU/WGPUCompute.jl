@@ -12,9 +12,6 @@ end
 function cast(S::DataType, x::WgpuArray{T, N}) where {T, N}
 	y = WgpuArray{S}(undef, size(x))
 	@wgpukernel launch=true workgroupSizes=(4, 4) workgroupCount=(2, 2) cast_kernel(x, y)
-	# previously this is how it has to be done
-	#kobj = @macroexpand(@wgpukernel workgroupSizes=(4, 4) workgroupCount=(2, 2) cast_kernel(x, y))
-	#kobj.kernelFunc(x, y)
 	return y
 end
 

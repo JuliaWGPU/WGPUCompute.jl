@@ -15,8 +15,7 @@ end
 
 function relu(x::WgpuArray{T, N}) where {T, N}
 	y = similar(x)
-	kobj = @wgpukernel workgrouSizes=(4,4) workgroupCount=(1,1) relu_kernel(x, y)
-	kobj.kernelFunc(x, y)
+	@wgpukernel launch=true workgrouSizes=(4,4) workgroupCount=(1,1) relu_kernel(x, y)
 	return y
 end
 
