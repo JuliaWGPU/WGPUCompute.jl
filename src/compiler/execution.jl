@@ -1,5 +1,11 @@
 export @wgpukernel, getShaderCode, WGPUKernelObject, wgpuCall
 
+function getWgpuDevice()
+	get!(task_local_storage(), :WGPUDevice) do
+		WGPUCore.getDefaultDevice(nothing)
+	end
+end
+
 using MacroTools
 using CodeTracking
 using Lazy
