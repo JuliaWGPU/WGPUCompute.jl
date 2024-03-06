@@ -1,5 +1,11 @@
 export @wgpukernel, getShaderCode, WGPUKernelObject, wgpuCall
 
+function getWgpuDevice()
+	get!(task_local_storage(), :WGPUDevice) do
+		WGPUCore.getDefaultDevice(nothing)
+	end
+end
+
 using MacroTools
 using CodeTracking
 using Lazy
@@ -296,10 +302,6 @@ end
 function wgpuCall(kernelObj::WGPUKernelObject, args...)
 	kernelObj.kernelFunc(args...)
 end
-
-#function wgpuKernel(f, args...)
-#	preparePipeline(f, args...)
-#end
 
 macro wgpukernel(launch, wgSize, wgCount, ex)
 	code = quote end
