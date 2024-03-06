@@ -21,7 +21,6 @@ end
 
 mutable struct KernelBuildContext
 	inargs::Dict{Symbol, Any}
-	outargs::Dict{Symbol, Any}
 	tmpargs::Array{Symbol}
 	typeargs::Array{Symbol}
 	stmnts::Array{Expr}
@@ -30,7 +29,7 @@ mutable struct KernelBuildContext
 	kernel # TODO function body with all statements will reside here
 end
 
-function getShaderCode(f, args::WgpuArray...; workgroupSizes=(), workgroupCount=())
+function getShaderCode(f, args...; workgroupSizes=(), workgroupCount=())
 	fexpr = @code_string(f(args...)) |> Meta.parse
 	@capture(fexpr, function fname_(fargs__) where Targs__ fbody__ end)
 	originArgs = fargs[:]
@@ -54,8 +53,9 @@ function getShaderCode(f, args::WgpuArray...; workgroupSizes=(), workgroupCount=
 	
 	ins = Dict{Symbol, Any}()
 	outs = Dict{Symbol, Any}()
+	tmps = Symbol[]
 
-	cntxt = KernelBuildContext(ins, outs, Symbol[], Symbol[], Expr[], Expr[], 0, nothing)
+	cntxt = KernelBuildContext(ins, tmps, Symbol[], Expr[], Expr[], 0, nothing)
 	ins[:Targs] = Targs
 	ins[:workgroupDims] = :workgroupDims
 
@@ -66,38 +66,54 @@ function getShaderCode(f, args::WgpuArray...; workgroupSizes=(), workgroupCount=
 		end
 	end
 	for (idx, (inarg, symbolarg)) in enumerate(zip(args, fargs))
-		@capture(symbolarg, iovar_::ioType_{T_, N_})
+		if @capture(symbolarg, iovar_::ioType_{T_, N_})
 		# TODO instead of assert we should branch for each case of argument
-		@assert ioType == :WgpuArray "Expecting WgpuArray Type, received $ioType instead"
-		dimsVar = Symbol(iovar, :Dims)
-		dims = size(inarg)
-	    if dims |> length < 3
-    		dims = (dims..., repeat([1,], inner=(3 - length(dims)))...)
-    	end
-
-		push!(
-			cntxt.globals,
-			quote
-				@const $dimsVar = Vec3{UInt32}($(UInt32.(dims)...))
+			if ioType == :WgpuArray
+				dimsVar = Symbol(iovar, :Dims)
+				dims = size(inarg)
+			    if dims |> length < 3
+		    		dims = (dims..., repeat([1,], inner=(3 - length(dims)))...)
+		    	end
+				push!(
+					cntxt.globals,
+					quote
+						@const $dimsVar = Vec3{UInt32}($(UInt32.(dims)...))
+					end
+				)
+				ins[dimsVar] = dimsVar
 			end
-		)
-		ins[dimsVar] = dimsVar
+		elseif @capture(symbolarg, iovar_::ioType_)
+			if eltype(inarg) in [Float32, Int32, UInt32, Bool] # TODO we need to update this
+				push!(
+					cntxt.globals, 
+					quote
+						@const $iovar::$(eltype(inarg)) = $(Meta.parse((wgslType(inarg))))
+					end
+				)
+				ins[iovar] = iovar
+			else
+				push!(
+					cntxt.tmpargs,
+					iovar
+				)
+			end
+		end
 	end
 	
 	for (idx, (inarg, symbolarg)) in enumerate(zip(args, fargs))
-		@capture(symbolarg, iovar_::ioType_{T_, N_})
+		if @capture(symbolarg, iovar_::ioType_{T_, N_})
 		# TODO instead of assert we should branch for each case of argument
-		@assert ioType == :WgpuArray "Expecting WgpuArray Type, received $ioType instead"
-		arrayLen = reduce(*, size(inarg))
-		push!(
-			cntxt.globals,
-			quote
-				@var StorageReadWrite 0 $(idx-1) $(iovar)::Array{$(eltype(inarg)), $(arrayLen)}
-			end
-		)
-		ins[iovar] = iovar
+			@assert ioType == :WgpuArray #"Expecting WgpuArray Type, received $ioType instead"
+			arrayLen = reduce(*, size(inarg))
+			push!(
+				cntxt.globals,
+				quote
+					@var StorageReadWrite 0 $(idx-1) $(iovar)::Array{$(eltype(inarg)), $(arrayLen)}
+				end
+			)
+			ins[iovar] = iovar
+		end
 	end
-				
 	wgslFunctionStatements(cntxt, fbody)
 	
 	fquote = quote
@@ -132,7 +148,7 @@ function wgslFunctionStatement(cntxt::KernelBuildContext, stmnt; isLast = false)
 		stmnt = :($(wgslFunctionStatement(cntxt, a))[$(wgslFunctionStatement(cntxt, b))] = $(wgslFunctionStatement(cntxt, c)))
 		push!(cntxt.stmnts, wgslAssignment(stmnt, nothing))
 	elseif @capture(stmnt, a_ = b_)
-		if (a in cntxt.tmpargs) && !(a in cntxt.inargs |> keys) && !(a in cntxt.outargs |> keys)
+		if (a in cntxt.tmpargs) && !(a in cntxt.inargs |> keys)
 			stmnt = :($(wgslFunctionStatement(cntxt, a)) = $(wgslFunctionStatement(cntxt, b)))
 			push!(cntxt.stmnts, wgslAssignment(stmnt, nothing))
 		else
@@ -152,13 +168,12 @@ function wgslFunctionStatement(cntxt::KernelBuildContext, stmnt; isLast = false)
 		elseif stmnt == :workgroupId
 			return :workgroup_id
 		end
-		if stmnt in cntxt.tmpargs && !(stmnt in cntxt.inargs |> keys) && !(stmnt in cntxt.outargs |> keys)
+		if stmnt in WGSLTypes.wgslfunctions
+			return stmnt
+		elseif stmnt in cntxt.tmpargs && !(stmnt in cntxt.inargs |> keys)
 			return stmnt
 		elseif (stmnt in cntxt.inargs |> keys)
 			return :($(cntxt.inargs[stmnt]))
-		elseif (stmnt in cntxt.outargs |> keys)
-			iovar = Symbol(:output, length(cntxt.outargs |> keys) + 1)
-			return :($(cntxt.outargs[stmnt]))
 		else
 			@error "Something is not right with $stmnt expr"
 		end
@@ -191,11 +206,8 @@ function wgslFunctionStatement(cntxt::KernelBuildContext, stmnt; isLast = false)
 			return :($f($x, $y))
 		end
 	elseif @capture(stmnt, f_(x__))
-		x = tuple(x...)
-		if f in cntxt.inargs[:Targs]
-			return :($(cntxt.inargs[f])($(x...)))
-		end
-		return :($f($(x...)))
+		(fcall, xargs...) = map((xArg) -> wgslFunctionStatement(cntxt, xArg), [f, x...])
+		return :($fcall($(xargs...)))
 	elseif @capture(stmnt, return t_)
 		push!(cntxt.stmnts, (wgslType(t)))
 	elseif @capture(stmnt, if cond_ ifblock__ end)
@@ -213,8 +225,9 @@ function wgslFunctionStatement(cntxt::KernelBuildContext, stmnt; isLast = false)
 	end
 end
 
-function compileShader(f, args::WgpuArray...; workgroupSizes=(), workgroupCount=())
+function compileShader(f, args...; workgroupSizes=(), workgroupCount=())
 	shaderSrc = getShaderCode(f, args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount)
+	@info shaderSrc |> MacroTools.striplines |> MacroTools.flatten
 	cShader = nothing
 	try
 		cShader = createShaderObj(WGPUCompute.getWgpuDevice(), shaderSrc; savefile=true)
@@ -227,33 +240,42 @@ function compileShader(f, args::WgpuArray...; workgroupSizes=(), workgroupCount=
 	return cShader
 end
 
-function preparePipeline(f::Function, args::WgpuArray...; workgroupSizes=(), workgroupCount=())
+function preparePipeline(f::Function, args...; workgroupSizes=(), workgroupCount=())
 	gpuDevice = WGPUCompute.getWgpuDevice()
 	cShader = get!(task_local_storage(), (f, :shader, eltype.(args), size.(args))) do
 		compileShader(f, args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount)
 	end
 	bindingLayouts = []
 	bindings = []
-	
-	for (binding, arg) in enumerate(args)
-		push!(bindingLayouts, 
-			WGPUCore.WGPUBufferEntry => [
-				:binding => binding - 1,
-				:visibility => "Compute",
-				:type => "Storage"
-			],
-		)
+
+	bindingCount = 0
+	for (_, arg) in enumerate(args)
+		if typeof(arg) <: WgpuArray
+			bindingCount += 1
+			push!(bindingLayouts, 
+				WGPUCore.WGPUBufferEntry => [
+					:binding => bindingCount - 1,
+					:visibility => "Compute",
+					:type => "Storage"
+				],
+			)
+		end
 	end
 
-	for (binding, arg) in enumerate(args)
-		push!(bindings, 
-			WGPUCore.GPUBuffer => [
-				:binding => binding - 1,
-				:buffer => arg.storageBuffer,
-				:offset => 0,
-				:size => reduce(*, (arg |> size)) * sizeof(eltype(arg))
-			],
-		)
+	bindingCount = 0
+
+	for (_, arg) in enumerate(args)
+		if typeof(arg) <: WgpuArray
+			bindingCount += 1
+			push!(bindings, 
+				WGPUCore.GPUBuffer => [
+					:binding => bindingCount - 1,
+					:buffer => arg.storageBuffer,
+					:offset => 0,
+					:size => reduce(*, (arg |> size)) * sizeof(eltype(arg))
+				],
+			)
+		end
 	end
 
 	pipelineLayout = WGPUCore.createPipelineLayout(gpuDevice, "PipeLineLayout", bindingLayouts, bindings)
@@ -268,7 +290,7 @@ function preparePipeline(f::Function, args::WgpuArray...; workgroupSizes=(), wor
 	task_local_storage((nameof(f), :computestage, eltype.(args), size.(args)), computeStage)
 end
 
-function compute(f, args::WgpuArray...; workgroupSizes=(), workgroupCount=())
+function compute(f, args...; workgroupSizes=(), workgroupCount=())
 	gpuDevice = WGPUCompute.getWgpuDevice()
 	commandEncoder = WGPUCore.createCommandEncoder(gpuDevice, "Command Encoder")
 	computePass = WGPUCore.beginComputePass(commandEncoder)
