@@ -18,6 +18,9 @@ include("compiler/execution.jl")
 include("broadcast.jl")
 include("shaders.jl")
 
+# array implementations
+include("gpuArrays.jl")
+
 abstract type AbstractLayer{T} end 
 
 """
