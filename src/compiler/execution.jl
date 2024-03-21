@@ -52,7 +52,6 @@ function getShaderCode(f, args...; workgroupSizes=(), workgroupCount=())
 
 	
 	ins = Dict{Symbol, Any}()
-	outs = Dict{Symbol, Any}()
 	tmps = Symbol[]
 
 	cntxt = KernelBuildContext(ins, tmps, Symbol[], Expr[], Expr[], 0, nothing)
@@ -183,10 +182,6 @@ function wgslFunctionStatement(cntxt::KernelBuildContext, stmnt; isLast = false)
 		asub = wgslFunctionStatement(cntxt, a)
 		bsub = wgslFunctionStatement(cntxt, b)
 		return :($asub[$bsub])
-	elseif @capture(stmnt, @let t_ | @let t__)
-		push!(cntxt.stmnts, stmnt)
-	elseif @capture(stmnt, @var t_ | @let t__)
-		push!(cntxt.stmnts, stmnt)
 	elseif @capture(stmnt, a_ += b_)
 		wgslFunctionStatement(cntxt, :($a = $(wgslFunctionStatement(cntxt, a)) + $(wgslFunctionStatement(cntxt, b))))
 	elseif @capture(stmnt, a_ -= b_)
@@ -212,14 +207,25 @@ function wgslFunctionStatement(cntxt::KernelBuildContext, stmnt; isLast = false)
 		push!(cntxt.stmnts, (wgslType(t)))
 	elseif @capture(stmnt, if cond_ ifblock__ end)
 		if cond == true
-			wgslFunctionStatements(io, ifblock)
+			wgslFunctionStatements(cntxt, ifblock)
 		end
 	elseif @capture(stmnt, if cond_ ifBlock__ else elseBlock__ end)
 		if eval(cond) == true
-			wgslFunctionStatements(io, ifBlock)
+			wgslFunctionStatements(cntxt, ifBlock)
 		else
-			wgslFunctionStatements(io, elseBlock)
+			wgslFunctionStatements(cntxt, elseBlock)
 		end
+	elseif @capture(stmnt, for idx_ in range_ block__ end)
+		newcntxt = KernelBuildContext(Dict{Symbol, Any}(), Symbol[], Symbol[], Expr[], Expr[], 0, nothing)
+		code = quote end
+		#push!(code.args, :(for idx_ in range)
+		push!(cntxt.tmpargs, idx)
+		for loopstmnt in block
+			wgslFunctionStatement(newcntxt, loopstmnt)
+		end
+		newblock = newcntxt.stmnts
+		push!(cntxt.stmnts, Expr(:for, Expr(:(=), idx, range), quote $(newblock...) end))
+		@infiltrate
 	else
 		@error "Failed to capture statment : $stmnt !!"
 	end

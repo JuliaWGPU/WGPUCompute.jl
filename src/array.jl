@@ -1,6 +1,5 @@
-# Following Metal.jl->arrays.jl blindly
+# Following Metal.jl->arrays.jl
 # https://github.com/JuliaGPU/Metal.jl/blob/main/src/array.jl
-# Until I understand GPUArrays mechanics
 
 using WGPUNative
 using WGPUCore
