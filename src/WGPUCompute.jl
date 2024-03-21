@@ -4,7 +4,6 @@ using WGPUNative
 using WGPUCore
 using GPUArrays
 using GPUCompiler
-using WGPUCompiler
 using ExprTools
 using LLVM
 using Adapt

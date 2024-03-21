@@ -1,3 +1,12 @@
+using WGPUTranspiler
+using WGPUTranspiler: TypeExpr, Scope, WorkGroupDims, computeBlock
+
+# Small hack to support TypeExpr of WGPUTranspiler.
+# TODO think of better abstraction.
+function WGPUTranspiler.typeInfer(scope::Scope, tExpr::TypeExpr, v::Val{:WgpuArray})
+	return WgpuArray{map(x -> WGPUTranspiler.typeInfer(scope, x), tExpr.types)...}
+end
+
 export @wgpukernel, getShaderCode, WGPUKernelObject, wgpuCall
 
 function getWgpuDevice()
@@ -30,205 +39,12 @@ mutable struct KernelBuildContext
 end
 
 function getShaderCode(f, args...; workgroupSizes=(), workgroupCount=())
-	fexpr = @code_string(f(args...)) |> Meta.parse
-	@capture(fexpr, function fname_(fargs__) where Targs__ fbody__ end)
-	originArgs = fargs[:]
-	builtinArgs = [
-		:(@builtin(global_invocation_id, global_id::Vec3{UInt32})),
-		:(@builtin(local_invocation_id, local_id::Vec3{UInt32})),
-		:(@builtin(num_workgroups, num_workgroups::Vec3{UInt32})),
-		:(@builtin(workgroup_id, workgroup_id::Vec3{UInt32})),
-	]
-	
-    # TODO used `repeat` since `ones` is causing issues.
-    # interesting bug to raise.
-    if workgroupSizes |> length < 3
-    	workgroupSizes = (workgroupSizes..., repeat([1,], inner=(3 - length(workgroupSizes)))...)
-    end
-  
-	code = quote
-		@const workgroupDims = Vec3{UInt32}($(UInt32.(workgroupSizes)...))
-	end
-
-	
-	ins = Dict{Symbol, Any}()
-	tmps = Symbol[]
-
-	cntxt = KernelBuildContext(ins, tmps, Symbol[], Expr[], Expr[], 0, nothing)
-	ins[:Targs] = Targs
-	ins[:workgroupDims] = :workgroupDims
-
-	for (inArg, symbolArg) in zip(args, fargs)
-		if @capture(symbolArg, iovar_::ioType_{T_, N_})
-			ins[T] = eltype(inArg)
-			ins[N] = N
-		end
-	end
-	for (idx, (inarg, symbolarg)) in enumerate(zip(args, fargs))
-		if @capture(symbolarg, iovar_::ioType_{T_, N_})
-		# TODO instead of assert we should branch for each case of argument
-			if ioType == :WgpuArray
-				dimsVar = Symbol(iovar, :Dims)
-				dims = size(inarg)
-			    if dims |> length < 3
-		    		dims = (dims..., repeat([1,], inner=(3 - length(dims)))...)
-		    	end
-				push!(
-					cntxt.globals,
-					quote
-						@const $dimsVar = Vec3{UInt32}($(UInt32.(dims)...))
-					end
-				)
-				ins[dimsVar] = dimsVar
-			end
-		elseif @capture(symbolarg, iovar_::ioType_)
-			if eltype(inarg) in [Float32, Int32, UInt32, Bool] # TODO we need to update this
-				push!(
-					cntxt.globals, 
-					quote
-						@const $iovar::$(eltype(inarg)) = $(Meta.parse((wgslType(inarg))))
-					end
-				)
-				ins[iovar] = iovar
-			else
-				push!(
-					cntxt.tmpargs,
-					iovar
-				)
-			end
-		end
-	end
-	
-	for (idx, (inarg, symbolarg)) in enumerate(zip(args, fargs))
-		if @capture(symbolarg, iovar_::ioType_{T_, N_})
-		# TODO instead of assert we should branch for each case of argument
-			@assert ioType == :WgpuArray #"Expecting WgpuArray Type, received $ioType instead"
-			arrayLen = reduce(*, size(inarg))
-			push!(
-				cntxt.globals,
-				quote
-					@var StorageReadWrite 0 $(idx-1) $(iovar)::Array{$(eltype(inarg)), $(arrayLen)}
-				end
-			)
-			ins[iovar] = iovar
-		end
-	end
-	wgslFunctionStatements(cntxt, fbody)
-	
-	fquote = quote
-		function $(fname)($(builtinArgs...))
-			$((cntxt.stmnts)...)
-		end
-	end
-	
-	push!(code.args, cntxt.globals...)
-	
-    push!(code.args,
-		:(@compute @workgroupSize($(workgroupSizes...)) $(fquote.args...))
-   	)
-	
-    return code
-end
-
-function wgslAssignment(expr::Expr, prefix::Union{Nothing, Symbol})
-	@capture(expr, a_ = b_) || error("Expecting simple assignment a = b")
-	return ifelse(prefix==:let, :(@let $a = $b), :($a = $b))
-end
-
-
-function wgslFunctionStatements(cntxt, stmnts)
-	for (i, stmnt) in enumerate(stmnts)
-		wgslFunctionStatement(cntxt, stmnt; isLast=(length(stmnts) == i))
-	end
-end
-
-function wgslFunctionStatement(cntxt::KernelBuildContext, stmnt; isLast = false)
-	if @capture(stmnt, a_[b_] = c_)
-		stmnt = :($(wgslFunctionStatement(cntxt, a))[$(wgslFunctionStatement(cntxt, b))] = $(wgslFunctionStatement(cntxt, c)))
-		push!(cntxt.stmnts, wgslAssignment(stmnt, nothing))
-	elseif @capture(stmnt, a_ = b_)
-		if (a in cntxt.tmpargs) && !(a in cntxt.inargs |> keys)
-			stmnt = :($(wgslFunctionStatement(cntxt, a)) = $(wgslFunctionStatement(cntxt, b)))
-			push!(cntxt.stmnts, wgslAssignment(stmnt, nothing))
-		else
-			push!(cntxt.tmpargs, a)
-			stmnt = :($(wgslFunctionStatement(cntxt, a)) = $(wgslFunctionStatement(cntxt, b)))
-			push!(cntxt.stmnts, wgslAssignment(stmnt, :let))
-		end
-	elseif @capture(stmnt, a_.b_)
-		return :($(wgslFunctionStatement(cntxt, a)).$b)
-	elseif typeof(stmnt) == Symbol
-		if stmnt == :globalId # TODO 
-			return :global_id
-		elseif stmnt == :dispatchDims # TODO 
-			return :num_workgroups
-		elseif stmnt == :localId
-			return :local_id
-		elseif stmnt == :workgroupId
-			return :workgroup_id
-		end
-		if stmnt in WGSLTypes.wgslfunctions
-			return stmnt
-		elseif stmnt in cntxt.tmpargs && !(stmnt in cntxt.inargs |> keys)
-			return stmnt
-		elseif (stmnt in cntxt.inargs |> keys)
-			return :($(cntxt.inargs[stmnt]))
-		else
-			@error "Something is not right with $stmnt expr"
-		end
-	elseif typeof(stmnt) <: Number
-		return stmnt
-	elseif @capture(stmnt, a_[b_])
-		asub = wgslFunctionStatement(cntxt, a)
-		bsub = wgslFunctionStatement(cntxt, b)
-		return :($asub[$bsub])
-	elseif @capture(stmnt, a_ += b_)
-		wgslFunctionStatement(cntxt, :($a = $(wgslFunctionStatement(cntxt, a)) + $(wgslFunctionStatement(cntxt, b))))
-	elseif @capture(stmnt, a_ -= b_)
-		wgslFunctionStatement(cntxt, :($a = $(wgslFunctionStatement(cntxt, a)) - $(wgslFunctionStatement(cntxt, b))))
-	elseif @capture(stmnt, a_ *= b_)
-		wgslFunctionStatement(cntxt, :($a = $(wgslFunctionStatement(cntxt, a)) * $(wgslFunctionStatement(cntxt, b))))
-	elseif @capture(stmnt, a_ /= b_)
-		wgslFunctionStatement(cntxt, :($a = $(wgslFunctionStatement(cntxt, a)) / $(wgslFunctionStatement(cntxt, b))))
-	elseif @capture(stmnt, f_(x_, y_))
-		if f in (:*, :-, :+, :/)
-			x = wgslFunctionStatement(cntxt, x)
-			y = wgslFunctionStatement(cntxt, y)
-			return :($f($x, $y))
-		elseif f in cntxt.inargs[:Targs]
-			return cntxt.inargs[f]
-		else
-			return :($f($x, $y))
-		end
-	elseif @capture(stmnt, f_(x__))
-		(fcall, xargs...) = map((xArg) -> wgslFunctionStatement(cntxt, xArg), [f, x...])
-		return :($fcall($(xargs...)))
-	elseif @capture(stmnt, return t_)
-		push!(cntxt.stmnts, (wgslType(t)))
-	elseif @capture(stmnt, if cond_ ifblock__ end)
-		if cond == true
-			wgslFunctionStatements(cntxt, ifblock)
-		end
-	elseif @capture(stmnt, if cond_ ifBlock__ else elseBlock__ end)
-		if eval(cond) == true
-			wgslFunctionStatements(cntxt, ifBlock)
-		else
-			wgslFunctionStatements(cntxt, elseBlock)
-		end
-	elseif @capture(stmnt, for idx_ in range_ block__ end)
-		newcntxt = KernelBuildContext(Dict{Symbol, Any}(), Symbol[], Symbol[], Expr[], Expr[], 0, nothing)
-		code = quote end
-		#push!(code.args, :(for idx_ in range)
-		push!(cntxt.tmpargs, idx)
-		for loopstmnt in block
-			wgslFunctionStatement(newcntxt, loopstmnt)
-		end
-		newblock = newcntxt.stmnts
-		push!(cntxt.stmnts, Expr(:for, Expr(:(=), idx, range), quote $(newblock...) end))
-		@infiltrate
-	else
-		@error "Failed to capture statment : $stmnt !!"
-	end
+	fexpr = @code_string(f(args...)) |> Meta.parse |> MacroTools.striplines
+	scope = Scope(Dict(), Dict(), Dict(), 0, nothing, quote end)
+	@info fexpr
+	cblk = computeBlock(scope, true, workgroupSizes, workgroupCount, f, args, fexpr)
+	tblk = transpile(scope, cblk)
+    return tblk
 end
 
 function compileShader(f, args...; workgroupSizes=(), workgroupCount=())
