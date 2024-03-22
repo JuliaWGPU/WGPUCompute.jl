@@ -50,6 +50,7 @@ end
 function compileShader(f, args...; workgroupSizes=(), workgroupCount=())
 	shaderSrc = getShaderCode(f, args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount)
 	@info shaderSrc |> MacroTools.striplines |> MacroTools.flatten
+	@info wgslCode(shaderSrc)
 	cShader = nothing
 	try
 		cShader = createShaderObj(WGPUCompute.getWgpuDevice(), shaderSrc; savefile=true)
