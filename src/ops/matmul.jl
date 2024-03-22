@@ -4,7 +4,7 @@ function naive_matmul_kernel(x::WgpuArray{T, N}, y::WgpuArray{T, N}, out::WgpuAr
 	gId = xDims.x*gIdy + gIdx
 	out[gId] = 0.0
 	sum = 0.0
-	for i in 0:xDims.x
+	for i in 0:xDims.y
 		xIdx = xDims.x*i + gIdx
 		yIdx = yDims.x*gIdy + i
 		sum = sum + x[xIdx]*y[yIdx]
