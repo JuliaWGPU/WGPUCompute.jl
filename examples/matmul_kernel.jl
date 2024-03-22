@@ -1,6 +1,7 @@
 using Revise
 using WGPUCompute 
 using Infiltrator
+using Test
 
 function naive_matmul_kernel(x::WgpuArray{T, N}, y::WgpuArray{T, N}, out::WgpuArray{T, N}) where {T, N}
 	gIdx = localId.x
@@ -34,6 +35,8 @@ x = WgpuArray{Float32, 2}(xcpu)
 
 y = WgpuArray{Float32, 2}(ycpu)
 
-matmul(x, y)
+out = matmul(x, y)
 
 xcpu*ycpu
+
+@test (xcpu*ycpu) == (out |> collect)
