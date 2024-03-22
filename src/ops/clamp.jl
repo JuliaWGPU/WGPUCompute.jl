@@ -1,6 +1,3 @@
-using Revise
-using WGPUCompute
-
 function clamp_kernel(x::WgpuArray{T, N}, out::WgpuArray{T, N}, minval::T, maxval::T) where {T, N}
 	gId = xDims.x*globalId.y + globalId.x
 	value = x[gId]
