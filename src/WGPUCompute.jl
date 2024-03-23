@@ -15,20 +15,11 @@ using WGSLTypes
 
 include("array.jl")
 include("compiler/execution.jl")
+include("ops.jl")
 include("broadcast.jl")
 include("shaders.jl")
 
 # array implementations
 include("gpuArrays.jl")
-
-abstract type AbstractLayer{T} end 
-
-"""
-for (root, dirs, files) in walkdir(joinpath(@__DIR__, "layers"))
-	for file in files
-		include(joinpath(root, file))
-	end	
-end
-"""
 
 end
