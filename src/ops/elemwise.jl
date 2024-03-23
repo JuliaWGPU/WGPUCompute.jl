@@ -12,7 +12,6 @@ function broadcast_kernel_gen(f::Function, a::WgpuArray{T, N}, b::WgpuArray{T, N
 end
 
 function elemwise(f::Function, a::WgpuArray{T, N}, b::WgpuArray{T, N}) where {T, N}
-	@infiltrate
 	broadcast_kernel = eval(@__MODULE__, broadcast_kernel_gen(f, a, b))
 	out = similar(a)
 	@wgpukernel launch=true workgroupSizes=size(out) workgroupCount=(1, 1) broadcast_kernel(a, b, out)
@@ -20,7 +19,6 @@ function elemwise(f::Function, a::WgpuArray{T, N}, b::WgpuArray{T, N}) where {T,
 end
 
 Base.:+(a::WgpuArray{T, N}, b::WgpuArray{T, N}) where {T, N} = begin
-	@infiltrate
 	elemwise(+, a, b)
 end
 
