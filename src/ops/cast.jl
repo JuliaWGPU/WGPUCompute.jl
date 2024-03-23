@@ -1,3 +1,5 @@
+export cast_kernel, cast
+
 function cast_kernel(x::WgpuArray{T, N}, out::WgpuArray{S, N}) where {T, S, N}
 	xdim = workgroupDims.x
 	ydim = workgroupDims.y
