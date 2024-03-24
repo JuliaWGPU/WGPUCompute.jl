@@ -1,6 +1,11 @@
 using WGPUTranspiler
 using WGPUTranspiler: TypeExpr, Scope, WorkGroupDims, computeBlock
 
+# getSize is temporary solution for circumvent for function in kernel arguments
+# could be common solution non array arguments ...
+getSize(a::WgpuArray) = size(a)
+getSize(a::Function) = ()
+
 # Small hack to support TypeExpr of WGPUTranspiler.
 # TODO think of better abstraction.
 function WGPUTranspiler.typeInfer(scope::Scope, tExpr::TypeExpr, v::Val{:WgpuArray})
@@ -28,16 +33,6 @@ struct WGPUKernelObject
 	kernelFunc::Function
 end
 
-mutable struct KernelBuildContext
-	inargs::Dict{Symbol, Any}
-	tmpargs::Array{Symbol}
-	typeargs::Array{Symbol}
-	stmnts::Array{Expr}
-	globals::Array{Expr}
-	indent::Int # Helps debugging
-	kernel # TODO function body with all statements will reside here
-end
-
 function getShaderCode(f, args...; workgroupSizes=(), workgroupCount=())
 	fexpr = @code_string(f(args...)) |> Meta.parse |> MacroTools.striplines
 	scope = Scope(Dict(), Dict(), Dict(), 0, nothing, quote end)
@@ -59,13 +54,14 @@ function compileShader(f, args...; workgroupSizes=(), workgroupCount=())
 		rethrow(e)
 	end
 	@info cShader.src
-	task_local_storage((f, :shader, eltype.(args), size.(args)), cShader)
+	task_local_storage((f, :shader, eltype.(args), getSize.(args)), cShader)
 	return cShader
 end
 
+
 function preparePipeline(f::Function, args...; workgroupSizes=(), workgroupCount=())
 	gpuDevice = WGPUCompute.getWgpuDevice()
-	cShader = get!(task_local_storage(), (f, :shader, eltype.(args), size.(args))) do
+	cShader = get!(task_local_storage(), (f, :shader, eltype.(args), getSize.(args))) do
 		compileShader(f, args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount)
 	end
 	bindingLayouts = []
@@ -105,39 +101,26 @@ function preparePipeline(f::Function, args...; workgroupSizes=(), workgroupCount
 	computeStage = WGPUCore.createComputeStage(cShader.internal[], f |> string)
 	computePipeline = WGPUCore.createComputePipeline(gpuDevice, "computePipeline", pipelineLayout, computeStage)
 	# task_local_storage((nameof(f), :bindgrouplayout, T, size(x)), bindGroupLayouts)
-	task_local_storage((nameof(f), :bindings, eltype.(args), size.(args)), bindings)
-	task_local_storage((nameof(f), :bindinglayouts, eltype.(args), size.(args)), bindingLayouts)
-	task_local_storage((nameof(f), :layout, eltype.(args), size.(args)), pipelineLayout)
-	task_local_storage((nameof(f), :pipeline, eltype.(args), size.(args)), computePipeline)
-	task_local_storage((nameof(f), :bindgroup, eltype.(args), size.(args)), pipelineLayout.bindGroup)
-	task_local_storage((nameof(f), :computestage, eltype.(args), size.(args)), computeStage)
+	task_local_storage((nameof(f), :bindings, eltype.(args), getSize.(args)), bindings)
+	task_local_storage((nameof(f), :bindinglayouts, eltype.(args), getSize.(args)), bindingLayouts)
+	task_local_storage((nameof(f), :layout, eltype.(args), getSize.(args)), pipelineLayout)
+	task_local_storage((nameof(f), :pipeline, eltype.(args), getSize.(args)), computePipeline)
+	task_local_storage((nameof(f), :bindgroup, eltype.(args), getSize.(args)), pipelineLayout.bindGroup)
+	task_local_storage((nameof(f), :computestage, eltype.(args), getSize.(args)), computeStage)
 end
+
 
 function compute(f, args...; workgroupSizes=(), workgroupCount=())
 	gpuDevice = WGPUCompute.getWgpuDevice()
 	commandEncoder = WGPUCore.createCommandEncoder(gpuDevice, "Command Encoder")
 	computePass = WGPUCore.beginComputePass(commandEncoder)
-	WGPUCore.setPipeline(computePass, task_local_storage((nameof(f), :pipeline, eltype.(args), size.(args))))
-	WGPUCore.setBindGroup(computePass, 0, task_local_storage((nameof(f), :bindgroup, eltype.(args), size.(args))), UInt32[], 0, 99999)
+	WGPUCore.setPipeline(computePass, task_local_storage((nameof(f), :pipeline, eltype.(args), getSize.(args))))
+	WGPUCore.setBindGroup(computePass, 0, task_local_storage((nameof(f), :bindgroup, eltype.(args), getSize.(args))), UInt32[], 0, 99999)
 	WGPUCore.dispatchWorkGroups(computePass, workgroupCount...) # workgroup size needs work here
 	WGPUCore.endComputePass(computePass)
 	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(commandEncoder),])
 end
 
-function kernelFunc(funcExpr)
-	if 	@capture(funcExpr, function fname_(fargs__) where Targs__ fbody__ end)
-		kernelfunc = quote
-			function $fname(args::Tuple{WgpuArray}, workgroupSizes, workgroupCount)
-				$preparePipeline($(funcExpr), args...)
-				$compute($(funcExpr), args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount)
-				return nothing
-			end
-		end |> unblock
-		return esc(quote $kernelfunc end)
-	else
-		error("Couldnt capture function")
-	end
-end
 
 function getFunctionBlock(func, args)
 	fString = CodeTracking.definition(String, which(func, args))
@@ -153,7 +136,9 @@ macro wgpukernel(launch, wgSize, wgCount, ex)
 	@gensym f_var kernel_f kernel_args kernel_tt kernel
 	if @capture(ex, fname_(fargs__))
 		(vars, var_exprs) = assign_args!(code, fargs)
-		push!(code.args, quote
+		push!(
+			code.args,
+			quote
 				$kernel_args = ($(var_exprs...),)
 				$kernel_tt = Tuple{map(Core.Typeof, $kernel_args)...}
 				kernel = function wgpuKernel(args...)
@@ -167,6 +152,19 @@ macro wgpukernel(launch, wgSize, wgCount, ex)
 				end
 			end
 		)
+	# THIS IS STALE until Kernel abstractions (KA) implementation
+	# Tried using it for
+	elseif @capture(ex, function fname_(fargs__) where Targs__ fbody__ end)
+		push!(
+			code.args, 
+			quote
+				kernel = function wgpuKernel(args...)
+					$preparePipeline($ex, args...; workgroupSizes=$wgSize, workgroupCount=$wgCount)
+					$compute($ex, args...; workgroupSizes=$wgSize, workgroupCount=$wgCount)
+				end
+				WGPUKernelObject(kernel)
+			end
+		)		
 	end
 	return esc(code)
 end

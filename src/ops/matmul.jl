@@ -1,4 +1,5 @@
 export naive_matmul_kernel, matmul
+
 function naive_matmul_kernel(x::WgpuArray{T, N}, y::WgpuArray{T, N}, out::WgpuArray{T, N}) where {T, N}
 	gIdx = localId.x
 	gIdy = localId.y
