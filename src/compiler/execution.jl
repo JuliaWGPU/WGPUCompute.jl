@@ -5,6 +5,7 @@ using WGPUTranspiler: TypeExpr, Scope, WorkGroupDims, computeBlock
 # could be common solution non array arguments ...
 getSize(a::WgpuArray) = size(a)
 getSize(a::Function) = ()
+getSize(a::Number) = ()
 
 # Small hack to support TypeExpr of WGPUTranspiler.
 # TODO think of better abstraction.
