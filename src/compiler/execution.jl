@@ -44,7 +44,7 @@ function getShaderCode(f, args...; workgroupSizes=(), workgroupCount=(), shmem=(
 end
 
 function compileShader(f, args...; workgroupSizes=(), workgroupCount=(), shmem=())
-	shaderSrc = getShaderCode(f, args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount, shmem=())
+	shaderSrc = getShaderCode(f, args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount, shmem=shmem)
 	@info shaderSrc |> MacroTools.striplines |> MacroTools.flatten
 	@info wgslCode(shaderSrc)
 	cShader = nothing
@@ -63,7 +63,7 @@ end
 function preparePipeline(f::Function, args...; workgroupSizes=(), workgroupCount=(), shmem=())
 	gpuDevice = WGPUCompute.getWgpuDevice()
 	cShader = get!(task_local_storage(), (f, :shader, eltype.(args), getSize.(args))) do
-		compileShader(f, args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount)
+		compileShader(f, args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount, shmem=shmem)
 	end
 	bindingLayouts = []
 	bindings = []
