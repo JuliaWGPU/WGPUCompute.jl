@@ -11,7 +11,7 @@ end
 
 function relu(x::WgpuArray{T, N}) where {T, N}
 	y = similar(x)
-	@wgpukernel launch=true workgroupSizes=(4,4) workgroupCount=(1,1) relu_kernel(x, y)
+	@wgpukernel launch=true workgroupSizes=(4,4) workgroupCount=(1,1) shmem=() relu_kernel(x, y)
 	return y
 end
 

@@ -7,6 +7,6 @@ end
 
 function clamp(x::WgpuArray{T, N}, minValue::T, maxValue::T) where {T, N}
 	y = similar(x)
-	@wgpukernel launch=true workgroupSizes=(4, 4) workgroupCount=(2, 2) clamp_kernel(x, y, minValue, maxValue)
+	@wgpukernel launch=true workgroupSizes=(4, 4) workgroupCount=(2, 2) shmem=() clamp_kernel(x, y, minValue, maxValue)
 	return y
 end

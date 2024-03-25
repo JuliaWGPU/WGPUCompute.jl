@@ -24,7 +24,7 @@ function matmul(x::WgpuArray{T, N}, y::WgpuArray{T, N}) where {T, N}
 	outSize = (first(aSize), last(bSize))
 	@assert eltype(x) == eltype(y)
 	out = WgpuArray{eltype(x), ndims(x)}(undef, outSize)
-	@wgpukernel launch=true workgroupSizes=outSize workgroupCount=(1, 1) naive_matmul_kernel(x, y, out)
+	@wgpukernel launch=true workgroupSizes=outSize workgroupCount=(1, 1) shmem=() naive_matmul_kernel(x, y, out)
 	return out
 end
 

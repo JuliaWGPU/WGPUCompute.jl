@@ -28,19 +28,19 @@ end
 
 function elwise(f::Function, a::WgpuArray{T, N}, b::WgpuArray{T, N}) where {T, N}
 	out = similar(a)
-	@wgpukernel launch=true workgroupSizes=size(out) workgroupCount=(1, 1) broadcast_kernel(f, a, b, out)
+	@wgpukernel launch=true workgroupSizes=size(out) workgroupCount=(1, 1) shmem=() broadcast_kernel(f, a, b, out)
 	return out
 end
 
 function elwise(f::Function, a::WgpuArray{T, N}, b::Number) where {T, N}
 	out = similar(a)
-	@wgpukernel launch=true workgroupSizes=size(out) workgroupCount=(1, 1) broadcast_kernel(f, a, b, out)
+	@wgpukernel launch=true workgroupSizes=size(out) workgroupCount=(1, 1) shmem=() broadcast_kernel(f, a, b, out)
 	return out
 end
 
 function elwise(f::Function, a::Number, b::WgpuArray{T, N}) where {T, N}
 	out = similar(a)
-	@wgpukernel launch=true workgroupSizes=size(out) workgroupCount=(1, 1) broadcast_kernel(f, a, b, out)
+	@wgpukernel launch=true workgroupSizes=size(out) workgroupCount=(1, 1) shmem=() broadcast_kernel(f, a, b, out)
 	return out
 end
 

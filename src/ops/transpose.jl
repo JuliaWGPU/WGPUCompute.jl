@@ -11,6 +11,6 @@ end
 function Base.transpose(x::WgpuArray{T, N}) where {T, N}
 	outSize = size(x) |> reverse
 	out = WgpuArray{eltype(x), ndims(x)}(undef, outSize)
-	@wgpukernel launch=true workgroupSizes=outSize workgroupCount=(1, 1) mat_transpose(x, out)
+	@wgpukernel launch=true workgroupSizes=outSize workgroupCount=(1, 1) shmem=() mat_transpose(x, out)
 	return out
 end
