@@ -1,7 +1,7 @@
 name = "WGPUCompute"
 uuid = "494b1f74-06dd-4437-8477-4a86f2a8d703"
 authors = ["arhik <arhik23@gmail.com>"]
-version = "0.1.1"
+version = "0.1.2"
 
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
@@ -41,7 +41,7 @@ WGPUCore = "^0.1"
 WGPUNative = "^0.1"
 WGPUTranspiler = "^0.1"
 WGSLTypes = "^0.1"
-julia = "^1.8"
+julia = "^1.9"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
