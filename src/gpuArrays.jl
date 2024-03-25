@@ -5,7 +5,7 @@ struct WgpuKernelContext <: AbstractKernelContext end
 GPUArrays.backend(::Type{<:WgpuArray}) = WgpuArrayBackend()
 
 GPUArrays.generic_matmatmul!(C::WgpuArray{T, N}, A::WgpuArray{T, N}, B::WgpuArray{T, N}, a::Bool, b::Bool) where {T, N} = begin
-	@wgpukernel launch=true workgroupSizes=(size(C)) workgroupCount=(1, 1) naive_matmul_kernel(A, B, C)
+	@wgpukernel launch=true workgroupSizes=(size(C)) workgroupCount=(1, 1) shmem=() naive_matmul_kernel(A, B, C)
 	return C
 end
 

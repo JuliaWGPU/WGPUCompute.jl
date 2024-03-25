@@ -10,7 +10,7 @@ end
 
 function Base.clamp(x::WgpuArray{T, N}, minValue::T, maxValue::T) where {T, N}
 	y = similar(x)
-	@wgpukernel launch=true workgroupSizes=size(y) workgroupCount=(1, 1) clamp_kernel(x, y, minValue, maxValue)
+	@wgpukernel launch=true workgroupSizes=size(y) workgroupCount=(1, 1) shmem=() clamp_kernel(x, y, minValue, maxValue)
 	return y
 end
 

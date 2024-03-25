@@ -11,7 +11,7 @@ end
 
 function cast(S::DataType, x::WgpuArray{T, N}) where {T, N}
 	y = WgpuArray{S}(undef, size(x))
-	@wgpukernel launch=true workgroupSizes=(4, 4) workgroupCount=(2, 2) cast_kernel(x, y)
+	@wgpukernel launch=true workgroupSizes=(4, 4) workgroupCount=(2, 2) shmem=() cast_kernel(x, y)
 	return y
 end
 

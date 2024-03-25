@@ -34,17 +34,17 @@ struct WGPUKernelObject
 	kernelFunc::Function
 end
 
-function getShaderCode(f, args...; workgroupSizes=(), workgroupCount=())
+function getShaderCode(f, args...; workgroupSizes=(), workgroupCount=(), shmem=())
 	fexpr = @code_string(f(args...)) |> Meta.parse |> MacroTools.striplines
 	scope = Scope(Dict(), Dict(), Dict(), 0, nothing, quote end)
 	@info fexpr
-	cblk = computeBlock(scope, true, workgroupSizes, workgroupCount, f, args, fexpr)
+	cblk = computeBlock(scope, true, workgroupSizes, workgroupCount, shmem, f, args, fexpr)
 	tblk = transpile(scope, cblk)
     return tblk
 end
 
-function compileShader(f, args...; workgroupSizes=(), workgroupCount=())
-	shaderSrc = getShaderCode(f, args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount)
+function compileShader(f, args...; workgroupSizes=(), workgroupCount=(), shmem=())
+	shaderSrc = getShaderCode(f, args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount, shmem=())
 	@info shaderSrc |> MacroTools.striplines |> MacroTools.flatten
 	@info wgslCode(shaderSrc)
 	cShader = nothing
@@ -60,7 +60,7 @@ function compileShader(f, args...; workgroupSizes=(), workgroupCount=())
 end
 
 
-function preparePipeline(f::Function, args...; workgroupSizes=(), workgroupCount=())
+function preparePipeline(f::Function, args...; workgroupSizes=(), workgroupCount=(), shmem=())
 	gpuDevice = WGPUCompute.getWgpuDevice()
 	cShader = get!(task_local_storage(), (f, :shader, eltype.(args), getSize.(args))) do
 		compileShader(f, args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount)
@@ -111,7 +111,7 @@ function preparePipeline(f::Function, args...; workgroupSizes=(), workgroupCount
 end
 
 
-function compute(f, args...; workgroupSizes=(), workgroupCount=())
+function compute(f, args...; workgroupSizes=(), workgroupCount=(), shmem=())
 	gpuDevice = WGPUCompute.getWgpuDevice()
 	commandEncoder = WGPUCore.createCommandEncoder(gpuDevice, "Command Encoder")
 	computePass = WGPUCore.beginComputePass(commandEncoder)
@@ -132,7 +132,7 @@ function wgpuCall(kernelObj::WGPUKernelObject, args...)
 	kernelObj.kernelFunc(args...)
 end
 
-macro wgpukernel(launch, wgSize, wgCount, ex)
+macro wgpukernel(launch, wgSize, wgCount, shmem, ex)
 	code = quote end
 	@gensym f_var kernel_f kernel_args kernel_tt kernel
 	if @capture(ex, fname_(fargs__))
@@ -143,8 +143,8 @@ macro wgpukernel(launch, wgSize, wgCount, ex)
 				$kernel_args = ($(var_exprs...),)
 				$kernel_tt = Tuple{map(Core.Typeof, $kernel_args)...}
 				kernel = function wgpuKernel(args...)
-					$preparePipeline($fname, args...; workgroupSizes=$wgSize, workgroupCount=$wgCount)
-					$compute($fname, args...; workgroupSizes=$wgSize, workgroupCount=$wgCount)
+					$preparePipeline($fname, args...; workgroupSizes=$wgSize, workgroupCount=$wgCount, shmem=$shmem)
+					$compute($fname, args...; workgroupSizes=$wgSize, workgroupCount=$wgCount, shmem=$shmem)
 				end
 				if $launch == true
 					wgpuCall(WGPUKernelObject(kernel), $(kernel_args)...)
@@ -154,7 +154,7 @@ macro wgpukernel(launch, wgSize, wgCount, ex)
 			end
 		)
 	# THIS IS STALE until Kernel abstractions (KA) implementation
-	# Tried using it for
+	# Tried using it for capturing broadcast related work but not used
 	elseif @capture(ex, function fname_(fargs__) where Targs__ fbody__ end)
 		push!(
 			code.args, 
