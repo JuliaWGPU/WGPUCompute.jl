@@ -4,8 +4,8 @@ using Infiltrator
 using Test
 
 function naive_matmul_kernel(x::WgpuArray{T, N}, y::WgpuArray{T, N}, out::WgpuArray{T, N}) where {T, N}
-	gIdx = localId.x
-	gIdy = localId.y
+	gIdx = globalId.x
+	gIdy = globalId.y
 	gId = xDims.x*gIdy + gIdx
 	out[gId] = 0.0
 	sum = 0.0
