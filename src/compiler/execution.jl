@@ -37,7 +37,6 @@ end
 function getShaderCode(f, args...; workgroupSizes=(), workgroupCount=(), shmem=())
 	fexpr = @code_string(f(args...)) |> Meta.parse |> MacroTools.striplines
 	scope = Scope(Dict(), Dict(), Dict(), 0, nothing, quote end)
-	@info fexpr
 	cblk = computeBlock(scope, true, workgroupSizes, workgroupCount, shmem, f, args, fexpr)
 	tblk = transpile(scope, cblk)
     return tblk
@@ -45,8 +44,8 @@ end
 
 function compileShader(f, args...; workgroupSizes=(), workgroupCount=(), shmem=())
 	shaderSrc = getShaderCode(f, args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount, shmem=shmem)
-	@info shaderSrc |> MacroTools.striplines |> MacroTools.flatten
-	@info wgslCode(shaderSrc)
+	#@info shaderSrc |> MacroTools.striplines |> MacroTools.flatten
+	#@info wgslCode(shaderSrc)
 	cShader = nothing
 	try
 		cShader = createShaderObj(WGPUCompute.getWgpuDevice(), shaderSrc; savefile=true)
@@ -54,7 +53,6 @@ function compileShader(f, args...; workgroupSizes=(), workgroupCount=(), shmem=(
 		@info e
 		rethrow(e)
 	end
-	@info cShader.src
 	task_local_storage((f, :shader, eltype.(args), getSize.(args)), cShader)
 	return cShader
 end
@@ -119,7 +117,7 @@ function compute(f, args...; workgroupSizes=(), workgroupCount=(), shmem=())
 	WGPUCore.setBindGroup(computePass, 0, task_local_storage((nameof(f), :bindgroup, eltype.(args), getSize.(args))), UInt32[], 0, 99999)
 	WGPUCore.dispatchWorkGroups(computePass, workgroupCount...) # workgroup size needs work here
 	WGPUCore.endComputePass(computePass)
-	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(commandEncoder),])
+	@tracepoint "submit" WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(commandEncoder),])
 end
 
 
@@ -143,11 +141,11 @@ macro wgpukernel(launch, wgSize, wgCount, shmem, ex)
 				$kernel_args = ($(var_exprs...),)
 				$kernel_tt = Tuple{map(Core.Typeof, $kernel_args)...}
 				kernel = function wgpuKernel(args...)
-					$preparePipeline($fname, args...; workgroupSizes=$wgSize, workgroupCount=$wgCount, shmem=$shmem)
-					$compute($fname, args...; workgroupSizes=$wgSize, workgroupCount=$wgCount, shmem=$shmem)
+					@tracepoint "prepare" $preparePipeline($fname, args...; workgroupSizes=$wgSize, workgroupCount=$wgCount, shmem=$shmem)
+					@tracepoint "compute" $compute($fname, args...; workgroupSizes=$wgSize, workgroupCount=$wgCount, shmem=$shmem)
 				end
 				if $launch == true
-					wgpuCall(WGPUKernelObject(kernel), $(kernel_args)...)
+					@tracepoint "wgpuCall" wgpuCall(WGPUKernelObject(kernel), $(kernel_args)...)
 				else
 					WGPUKernelObject(kernel)
 				end

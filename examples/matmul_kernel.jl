@@ -3,6 +3,17 @@ using WGPUCompute
 using Infiltrator
 using Test
 
+wgSize = 256 # TODO probe for this information
+
+function matmul_heuristics(x, y)
+	aSize = size(x)
+	bSize = size(y)
+	@assert last(aSize) == first(bSize) 
+	outSize = (first(aSize), last(bSize))
+	@assert eltype(x) == eltype(y)
+	return (outSize, outSize, (1, 1))
+end
+
 function naive_matmul_kernel(x::WgpuArray{T, N}, y::WgpuArray{T, N}, out::WgpuArray{T, N}) where {T, N}
 	gIdx = globalId.x
 	gIdy = globalId.y
@@ -18,13 +29,9 @@ function naive_matmul_kernel(x::WgpuArray{T, N}, y::WgpuArray{T, N}, out::WgpuAr
 end
 
 function matmul(x::WgpuArray{T, N}, y::WgpuArray{T, N}) where {T, N}
-	aSize = size(x)
-	bSize = size(y)
-	@assert last(aSize) == first(bSize) 
-	outSize = (first(aSize), last(bSize))
-	@assert eltype(x) == eltype(y)
+	(outSize, wgSize, wgCount) = matmul_heuristics(x, y)
 	out = WgpuArray{eltype(x), ndims(x)}(undef, outSize)
-	@wgpukernel launch=true workgroupSizes=outSize workgroupCount=(1, 1) shmem=() naive_matmul_kernel(x, y, out)
+	@wgpukernel launch=true workgroupSizes=wgSize workgroupCount=wgCount shmem=() naive_matmul_kernel(x, y, out)
 	return out
 end
 

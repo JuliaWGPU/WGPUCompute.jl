@@ -9,6 +9,8 @@ using LLVM
 using Adapt
 using Reexport
 using WGSLTypes
+using Tracy
+using Infiltrator
 
 # TODO enable debug based on flags 
 # WGPUCore.SetLogLevel(WGPUCore.WGPULogLevel_Debug)
