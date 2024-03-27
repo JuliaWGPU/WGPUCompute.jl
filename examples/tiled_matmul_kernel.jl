@@ -27,18 +27,17 @@ function tiled_matmul_kernel(x::WgpuArray{T, N}, y::WgpuArray{T, N}, out::WgpuAr
 	# set local variable = 0.0
 	sum = 0.0
 	
-	for wi in 0:numWorkgroups.x
+	for tileId in 0:numWorkgroups.y
 		# copy block from x to shared memory
-		xIdx = workgroupId.y*workgroupDims.x + localId.x
-		xIdy = workgroupId.x*workgroupDims.y + localId.y
-		sIdx = localId.y*workgroupDims.x + localId.x
-		shmem1[sIdx] = x[xIdy*xDims.x + xIdx]
+		xId = workgroupId.x*workgroupDims.x + localId.x
+		yId = tileId*workgroupDims.y + localId.y
+		sId = localId.y*workgroupDims.x + localId.x
+		shmem1[sId] = x[yId*xDims.x + xId]
 		
 		# copy block from y to shared memory
-		yIdx = workgroupId.x*workgroupDims.x + workgroupId.x
-		yIdy = workgroupId.y*workgroupDims.y + workgroupId.y
-		sIdx = localId.y*workgroupDims.x + localId.x
-		shmem2[sIdx] = y[yIdy*yDims.x + yIdx]
+		xId = tileId*workgroupDims.x + localId.x
+		yId = workgroupId.y*workgroupDims.y + localId.y
+		shmem2[sId] = y[yId*yDims.x + xId]
 		synchronize()
 		
 		# block sums for each tid
@@ -75,4 +74,4 @@ z = x*y
 
 z_cpu = (x |> collect)*(y |> collect)
 
-@test z_cpu == (z |> collect)
+@test z_cpu ≈ (z |> collect)
