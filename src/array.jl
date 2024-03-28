@@ -139,10 +139,10 @@ mutable struct WgpuArray{T, N} <: AbstractGPUArray{T, N}
 			maxSize
 		end
 
-		@tracepoint "getDevice" dev = getCurrentDevice()
+		dev = getCurrentDevice()
 
 		if bufsize > 0
-			@tracepoint "cpyToGpu" storageBuffer = WGPUCore.createBuffer(
+			storageBuffer = WGPUCore.createBuffer(
 				"C_NULL",
 				dev,
 				sizeof(T)*prod(dims),

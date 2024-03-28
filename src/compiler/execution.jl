@@ -48,10 +48,10 @@ function getShaderCode(f, args; workgroupSize=(), workgroupCount=(), shmem=())
 end
 
 function compileShader(f, args; workgroupSize=(), workgroupCount=(), shmem=())
-	@tracepoint "getShaderCode" shaderSrc = getShaderCode(f, args; workgroupSize=workgroupSize, workgroupCount=workgroupCount, shmem=shmem)
+	shaderSrc = getShaderCode(f, args; workgroupSize=workgroupSize, workgroupCount=workgroupCount, shmem=shmem)
 	cShader = nothing
 	try
-		@tracepoint "createShader" cShader = createShaderObj(WGPUCompute.getWgpuDevice(), shaderSrc; savefile=true)
+		cShader = createShaderObj(WGPUCompute.getWgpuDevice(), shaderSrc; savefile=true)
 	catch(e)
 		@info e
 		rethrow(e)
@@ -113,7 +113,7 @@ function compute(f::Function, args; workgroupSize=(), workgroupCount=(), shmem=(
 	WGPUCore.setBindGroup(computePass, 0, pipelineLayout.bindGroup, UInt32[], 0, 99999)
 	WGPUCore.dispatchWorkGroups(computePass, workgroupCount...) # workgroup size needs work here
 	WGPUCore.endComputePass(computePass)
-	@tracepoint "submit" WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(commandEncoder),])
+	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(commandEncoder),])
 end
 
 
@@ -127,7 +127,7 @@ function deviceKernel(fname, fargs; argTypes, wgSize, wgCount, shmem)
 		WGPUDeviceKernel(
 			function wgpuKernel(args)
 				# TODO submit or not ? @async ...
-				@tracepoint "compute" compute(fname, args; workgroupSize=wgSize, workgroupCount=wgCount, shmem=shmem)
+				compute(fname, args; workgroupSize=wgSize, workgroupCount=wgCount, shmem=shmem)
 			end
 		)
 	end
@@ -153,7 +153,7 @@ macro wgpukernel(launch, wgSize, wgCount, shmem, ex)
 						shmem=$shmem,
 					)
 				if $launch == true
-					@tracepoint "wgpuCall" $kernel($(kernel_args))
+					$kernel($(kernel_args))
 				else
 					$kernel
 				end

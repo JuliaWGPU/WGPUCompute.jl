@@ -80,8 +80,8 @@ end
 
 function tiled_matmul(x::WgpuArray{T, N}, y::WgpuArray{T, N}) where {T, N}
 	(outSize, wgSize, wgCount) = tiled_matmul_heuristics(x, y)
-	@tracepoint "out alloc" out = WgpuArray{eltype(x), ndims(x)}(undef, outSize)
-	@tracepoint "kernel" @wgpukernel(
+	out = WgpuArray{eltype(x), ndims(x)}(undef, outSize)
+	@wgpukernel(
 		launch=true,
 		workgroupSizes=wgSize,
 		workgroupCount=wgCount,
