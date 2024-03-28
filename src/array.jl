@@ -96,7 +96,7 @@ end
 
 mutable struct WgpuArray{T, N} <: AbstractGPUArray{T, N}
 	dims::Dims{N}
-	storageData::Union{Vector{T}, Array{T}}
+	storageData::Union{Nothing, Vector{T}, Array{T}}
 	maxSize::Int
 	offset::Int
 	storageBuffer::WGPUCore.GPUBuffer
@@ -112,7 +112,7 @@ mutable struct WgpuArray{T, N} <: AbstractGPUArray{T, N}
 			device,
 			"WgpuArray Buffer",
 			storageData,
-			["Storage", "CopyDst", "CopySrc"]
+			["CopyDst", "Storage", "CopySrc"]
 		)
 		bindGroup = nothing
 		computePipeline = nothing
@@ -142,16 +142,16 @@ mutable struct WgpuArray{T, N} <: AbstractGPUArray{T, N}
 		dev = getCurrentDevice()
 
 		if bufsize > 0
-			storageData = Array{T}(undef, prod(dims))
-			(storageBuffer, _) = WGPUCore.createBufferWithData(
+			storageBuffer = WGPUCore.createBuffer(
+				"C_NULL",
 				dev,
-				"WgpuArray Buffer",
-				storageData,
+				sizeof(T)*prod(dims),
 				["Storage", "CopyDst", "CopySrc"],
+				false
 			)
 			bindGroup = nothing
 			computePipeline = nothing
-			obj = new(dims, storageData, maxSize, 0, storageBuffer, bindGroup, computePipeline)
+			obj = new(dims, nothing, maxSize, 0, storageBuffer, bindGroup, computePipeline)
 			finalizer(obj) do arr
 				obj = nothing
 			end

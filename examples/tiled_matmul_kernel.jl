@@ -2,6 +2,16 @@ using Revise
 using WGPUCompute
 using Test
 using StaticArrays
+using Chairmarks
+
+launched = isdefined(Main, :launched) ? launched : false
+
+tracy = false
+using Tracy
+if tracy == true
+	using TracyProfiler_jll
+	run(TracyProfiler_jll.tracy(); wait=false)
+end
 
 const Vec2{T} = SVector{2, T}
 const Vec3{T} = SVector{3, T}
@@ -11,8 +21,11 @@ const Mat3{T} = SMatrix{3, 3, T, 9}
 const Mat4{T} = SMatrix{4, 4, T, 16}
 const Vec{N, T} = SVector{N, T}
 
-x = WgpuArray{Float32, 2}(rand(16, 16));
-y = WgpuArray{Float32, 2}(rand(16, 16));
+b =  WgpuArray{Float32, 2}(undef, (2048, 2048));
+@b WgpuArray{Float32, 2}(undef, (1024, 1024))
+
+x = WgpuArray{Float32, 2}(rand(2048, 2048));
+y = WgpuArray{Float32, 2}(rand(2048, 2048));
 
 function tiled_matmul_kernel(x::WgpuArray{T, N}, y::WgpuArray{T, N}, out::WgpuArray{T, N}) where {T, N}
 	lIdx = localId.x
@@ -41,7 +54,7 @@ function tiled_matmul_kernel(x::WgpuArray{T, N}, y::WgpuArray{T, N}, out::WgpuAr
 		synchronize()
 		
 		# block sums for each tid
-		for i in 0:workgroupDims.y
+		for i in 0:xDims.y/numWorkgroups.y
 			sum = sum + shmem1[i*workgroupDims.x + localId.x]*shmem2[localId.y*workgroupDims.x + i]
 		end
 		synchronize()
@@ -50,19 +63,26 @@ function tiled_matmul_kernel(x::WgpuArray{T, N}, y::WgpuArray{T, N}, out::WgpuAr
 	out[gId] = sum
 end
 
-function tiled_matmul(x::WgpuArray{T, N}, y::WgpuArray{T, N}) where {T, N}
+# For now valid only for square matrices of size powers of 2 and base size 16.
+function tiled_matmul_heuristics(x::WgpuArray{T, N}, y::WgpuArray{T, N}) where {T, N}
 	aSize = size(x)
 	bSize = size(y)
 	@assert last(aSize) == first(bSize)
 	outSize = (first(aSize), last(bSize))
 	@assert eltype(x) == eltype(y)
+	wgSize = (16, 16) # This can be fixed for now
+	wgCount = div.((outSize[1], outSize[2]), 16, RoundUp)
+	return (outSize, wgSize, wgCount)
+end
+
+function tiled_matmul(x::WgpuArray{T, N}, y::WgpuArray{T, N}) where {T, N}
+	(outSize, wgSize, wgCount) = tiled_matmul_heuristics(x, y)
 	out = WgpuArray{eltype(x), ndims(x)}(undef, outSize)
-	wgSize = (16, 16)
 	@wgpukernel(
 		launch=true,
-		workgroupSizes=(4, 4),
-		workgroupCount=(4, 4),
-		shmem=(:shmem1=>(Float32, (4, 4)), :shmem2=>(Float32, (4, 4))),
+		workgroupSizes=wgSize,
+		workgroupCount=wgCount,
+		shmem=(:shmem1=>(Float32, wgSize), :shmem2=>(Float32, wgSize)),
 		tiled_matmul_kernel(x, y, out)
 	)
 	return out
@@ -75,3 +95,5 @@ z = x*y
 z_cpu = (x |> collect)*(y |> collect)
 
 @test z_cpu ≈ (z |> collect)
+
+task_local_storage() |> empty! # This is to recompile the kernel... Just a temporary hack
