@@ -16,6 +16,6 @@ for i in logn
 	yMtl = MtlArray{Float32, 2}(yCPU)
 	matmulBench = @b xMtl*yMtl
 	tileBench = @b tiled_matmul(xGPU, yGPU)
-	@info matmulBench.allocs matmulBench.time
-	@info tileBench.allocs tileBench.time
+	@info "Metal" matmulBench.allocs matmulBench.time
+	@info "WGPU"  tileBench.allocs tileBench.time
 end
