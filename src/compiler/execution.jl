@@ -1,5 +1,8 @@
 using WGPUTranspiler
-using WGPUTranspiler: TypeExpr, Scope, WorkGroupDims, computeBlock
+using WGPUTranspiler: TypeExpr, Scope, WorkGroupDims, computeBlock, ComputeBlock
+using Tracy
+using Tracy: @tracepoint
+export WGPUKernelContext
 
 # getSize is temporary solution for circumvent for function in kernel arguments
 # could be common solution non array arguments ...
@@ -7,8 +10,8 @@ getSize(a::WgpuArray) = size(a)
 getSize(a::Function) = ()
 getSize(a::Number) = ()
 
-# Small hack to support TypeExpr of WGPUTranspiler.
-# TODO think of better abstraction.
+# Small hack to support TypeExpr of WGPUTranspiler. 
+# TODO think of better abstraction. 
 function WGPUTranspiler.typeInfer(scope::Scope, tExpr::TypeExpr, v::Val{:WgpuArray})
 	return WgpuArray{map(x -> WGPUTranspiler.typeInfer(scope, x), tExpr.types)...}
 end
@@ -30,39 +33,44 @@ using Infiltrator
 using WGPUCompute
 using Infiltrator
 
-struct WGPUKernelObject
+struct WGPUKernelContext end
+
+struct WGPUDeviceKernel
 	kernelFunc::Function
 end
 
-function getShaderCode(f, args...; workgroupSizes=(), workgroupCount=(), shmem=())
+function getShaderCode(f, args; workgroupSize=(), workgroupCount=(), shmem=())
 	fexpr = @code_string(f(args...)) |> Meta.parse |> MacroTools.striplines
 	scope = Scope(Dict(), Dict(), Dict(), 0, nothing, quote end)
-	cblk = computeBlock(scope, true, workgroupSizes, workgroupCount, shmem, f, args, fexpr)
+	cblk = computeBlock(scope, true, workgroupSize, workgroupCount, shmem, f, args, fexpr)
 	tblk = transpile(scope, cblk)
     return tblk
 end
 
-function compileShader(f, args...; workgroupSizes=(), workgroupCount=(), shmem=())
-	shaderSrc = getShaderCode(f, args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount, shmem=shmem)
-	#@info shaderSrc |> MacroTools.striplines |> MacroTools.flatten
-	#@info wgslCode(shaderSrc)
+function compileShader(f, args; workgroupSize=(), workgroupCount=(), shmem=())
+	@tracepoint "getShaderCode" shaderSrc = getShaderCode(f, args; workgroupSize=workgroupSize, workgroupCount=workgroupCount, shmem=shmem)
 	cShader = nothing
 	try
-		cShader = createShaderObj(WGPUCompute.getWgpuDevice(), shaderSrc; savefile=true)
+		@tracepoint "createShader" cShader = createShaderObj(WGPUCompute.getWgpuDevice(), shaderSrc; savefile=true)
 	catch(e)
 		@info e
 		rethrow(e)
 	end
-	task_local_storage((f, :shader, eltype.(args), getSize.(args)), cShader)
+	task_local_storage((f, :shader, eltype.(args), getSize.(args), workgroupSize, workgroupCount, shmem), cShader)
 	return cShader
 end
 
 
-function preparePipeline(f::Function, args...; workgroupSizes=(), workgroupCount=(), shmem=())
+function compute(f::Function, args; workgroupSize=(), workgroupCount=(), shmem=())
+	cShader = get!(task_local_storage(), 
+			(f, :shader, eltype.(args), getSize.(args), workgroupSize, workgroupCount, shmem)) do
+				compileShader(f, args; 
+					workgroupSize=workgroupSize, 
+					workgroupCount=workgroupCount, 
+					shmem=shmem
+				)
+			end
 	gpuDevice = WGPUCompute.getWgpuDevice()
-	cShader = get!(task_local_storage(), (f, :shader, eltype.(args), getSize.(args))) do
-		compileShader(f, args...; workgroupSizes=workgroupSizes, workgroupCount=workgroupCount, shmem=shmem)
-	end
 	bindingLayouts = []
 	bindings = []
 
@@ -99,22 +107,10 @@ function preparePipeline(f::Function, args...; workgroupSizes=(), workgroupCount
 	pipelineLayout = WGPUCore.createPipelineLayout(gpuDevice, "PipeLineLayout", bindingLayouts, bindings)
 	computeStage = WGPUCore.createComputeStage(cShader.internal[], f |> string)
 	computePipeline = WGPUCore.createComputePipeline(gpuDevice, "computePipeline", pipelineLayout, computeStage)
-	# task_local_storage((nameof(f), :bindgrouplayout, T, size(x)), bindGroupLayouts)
-	task_local_storage((nameof(f), :bindings, eltype.(args), getSize.(args)), bindings)
-	task_local_storage((nameof(f), :bindinglayouts, eltype.(args), getSize.(args)), bindingLayouts)
-	task_local_storage((nameof(f), :layout, eltype.(args), getSize.(args)), pipelineLayout)
-	task_local_storage((nameof(f), :pipeline, eltype.(args), getSize.(args)), computePipeline)
-	task_local_storage((nameof(f), :bindgroup, eltype.(args), getSize.(args)), pipelineLayout.bindGroup)
-	task_local_storage((nameof(f), :computestage, eltype.(args), getSize.(args)), computeStage)
-end
-
-
-function compute(f, args...; workgroupSizes=(), workgroupCount=(), shmem=())
-	gpuDevice = WGPUCompute.getWgpuDevice()
 	commandEncoder = WGPUCore.createCommandEncoder(gpuDevice, "Command Encoder")
 	computePass = WGPUCore.beginComputePass(commandEncoder)
-	WGPUCore.setPipeline(computePass, task_local_storage((nameof(f), :pipeline, eltype.(args), getSize.(args))))
-	WGPUCore.setBindGroup(computePass, 0, task_local_storage((nameof(f), :bindgroup, eltype.(args), getSize.(args))), UInt32[], 0, 99999)
+	WGPUCore.setPipeline(computePass, computePipeline)
+	WGPUCore.setBindGroup(computePass, 0, pipelineLayout.bindGroup, UInt32[], 0, 99999)
 	WGPUCore.dispatchWorkGroups(computePass, workgroupCount...) # workgroup size needs work here
 	WGPUCore.endComputePass(computePass)
 	@tracepoint "submit" WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(commandEncoder),])
@@ -126,8 +122,16 @@ function getFunctionBlock(func, args)
 	return Meta.parse(fString |> first)
 end
 
-function wgpuCall(kernelObj::WGPUKernelObject, args...)
-	kernelObj.kernelFunc(args...)
+function deviceKernel(fname, fargs; argTypes, wgSize, wgCount, shmem)
+	kernelInstance = get!(task_local_storage(), (fname, argTypes, size.(fargs), wgSize, wgCount, shmem)) do
+		WGPUDeviceKernel(
+			function wgpuKernel(args)
+				# TODO submit or not ? @async ...
+				@tracepoint "compute" compute(fname, args; workgroupSize=wgSize, workgroupCount=wgCount, shmem=shmem)
+			end
+		)
+	end
+	return kernelInstance.kernelFunc
 end
 
 macro wgpukernel(launch, wgSize, wgCount, shmem, ex)
@@ -140,30 +144,34 @@ macro wgpukernel(launch, wgSize, wgCount, shmem, ex)
 			quote
 				$kernel_args = ($(var_exprs...),)
 				$kernel_tt = Tuple{map(Core.Typeof, $kernel_args)...}
-				kernel = function wgpuKernel(args...)
-					@tracepoint "prepare" $preparePipeline($fname, args...; workgroupSizes=$wgSize, workgroupCount=$wgCount, shmem=$shmem)
-					@tracepoint "compute" $compute($fname, args...; workgroupSizes=$wgSize, workgroupCount=$wgCount, shmem=$shmem)
-				end
+				$kernel = $deviceKernel(
+						$fname, 
+						$kernel_args;
+						argTypes=$kernel_tt, 
+						wgSize=$wgSize, 
+						wgCount=$wgCount, 
+						shmem=$shmem,
+					)
 				if $launch == true
-					@tracepoint "wgpuCall" wgpuCall(WGPUKernelObject(kernel), $(kernel_args)...)
+					@tracepoint "wgpuCall" $kernel($(kernel_args))
 				else
-					WGPUKernelObject(kernel)
+					$kernel
 				end
 			end
 		)
-	# THIS IS STALE until Kernel abstractions (KA) implementation
-	# Tried using it for capturing broadcast related work but not used
-	elseif @capture(ex, function fname_(fargs__) where Targs__ fbody__ end)
-		push!(
-			code.args, 
-			quote
-				kernel = function wgpuKernel(args...)
-					$preparePipeline($ex, args...; workgroupSizes=$wgSize, workgroupCount=$wgCount)
-					$compute($ex, args...; workgroupSizes=$wgSize, workgroupCount=$wgCount)
-				end
-				WGPUKernelObject(kernel)
-			end
-		)		
 	end
+	# TODO
+	# THIS IS STALE until Kernel abstractions (KA) implementation
+	# elseif @capture(ex, function fname_(fargs__) where Targs__ fbody__ end)
+	#	push!(
+	#		code.args, 
+	#		quote
+	#			kernel = function wgpuKernel(args...)
+	#				$preparePipeline($ex, args...; workgroupSize=$wgSize, workgroupCount=$wgCount)
+	#				$compute($ex, args...; workgroupSize=$wgSize, workgroupCount=$wgCount)
+	#			end
+	#			WGPUKernelContext()
+	#		end
+	#	)
 	return esc(code)
 end

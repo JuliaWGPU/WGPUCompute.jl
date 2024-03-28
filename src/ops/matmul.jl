@@ -91,3 +91,6 @@ function tiled_matmul(x::WgpuArray{T, N}, y::WgpuArray{T, N}) where {T, N}
 	return out
 end
 
+# Tiled is efficient among two ... more implementations need to evaluated
+Base.:*(x::WgpuArray{T, N}, y::WgpuArray{T, N})  where {T, N} = tiled_matmul(x, y)
+

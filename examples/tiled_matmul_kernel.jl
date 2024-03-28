@@ -1,22 +1,16 @@
 using Revise
 using WGPUCompute
-using WGPUCompute: getDefaultDevice
 using Test
 using StaticArrays
 using Chairmarks
 
 launched = isdefined(Main, :launched) ? launched : false
 
-launched = false
 tracy = true
+using Tracy
 if tracy == true
-	using Tracy
 	using TracyProfiler_jll
-
-	if launched == false
-		run(TracyProfiler_jll.tracy(); wait=false)
-		launched = true
-	end
+	run(TracyProfiler_jll.tracy(); wait=false)
 end
 
 const Vec2{T} = SVector{2, T}
@@ -32,7 +26,6 @@ b =  WgpuArray{Float32, 2}(undef, (2048, 2048));
 
 x = WgpuArray{Float32, 2}(rand(2048, 2048));
 y = WgpuArray{Float32, 2}(rand(2048, 2048));
-
 
 function tiled_matmul_kernel(x::WgpuArray{T, N}, y::WgpuArray{T, N}, out::WgpuArray{T, N}) where {T, N}
 	lIdx = localId.x
