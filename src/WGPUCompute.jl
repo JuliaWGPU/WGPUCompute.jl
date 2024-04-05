@@ -1,5 +1,7 @@
 module WGPUCompute
 
+export @wgpuatomic
+
 using WGPUNative
 using WGPUCore
 using GPUArrays
