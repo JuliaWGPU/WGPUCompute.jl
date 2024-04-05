@@ -32,13 +32,8 @@ end
 
 
 function tiled_matmul_kernel(x::WgpuArray{T, N}, y::WgpuArray{T, N}, out::WgpuArray{T, N}) where {T, N}
-	lIdx = localId.x
-	lIdy = localId.y
-	gIdx = globalId.x
-	gIdy = globalId.y
-	
 	#set out matrix to zero
-	gId = xDims.x*gIdy + gIdx
+	gId = xDims.x*globalId.y + globalId.x
 	out[gId] = 0.0
 	
 	# set local variable = 0.0
