@@ -1,4 +1,4 @@
-using Revise
+#using Revise
 using WGPUCompute
 using Test
 using StaticArrays
@@ -28,13 +28,8 @@ x = WgpuArray{Float32, 2}(rand(2048, 2048));
 y = WgpuArray{Float32, 2}(rand(2048, 2048));
 
 function tiled_matmul_kernel(x::WgpuArray{T, N}, y::WgpuArray{T, N}, out::WgpuArray{T, N}) where {T, N}
-	lIdx = localId.x
-	lIdy = localId.y
-	gIdx = globalId.x
-	gIdy = globalId.y
-	
 	#set out matrix to zero
-	gId = xDims.x*gIdy + gIdx
+	gId = xDims.x*globalId.y + globalId.x
 	out[gId] = 0.0
 	
 	# set local variable = 0.0
@@ -52,7 +47,7 @@ function tiled_matmul_kernel(x::WgpuArray{T, N}, y::WgpuArray{T, N}, out::WgpuAr
 		yId = workgroupId.y*workgroupDims.y + localId.y
 		shmem2[sId] = y[yId*yDims.x + xId]
 		synchronize()
-		
+				
 		# block sums for each tid
 		for i in 0:xDims.y/numWorkgroups.y
 			sum = sum + shmem1[i*workgroupDims.x + localId.x]*shmem2[localId.y*workgroupDims.x + i]
@@ -96,4 +91,3 @@ z_cpu = (x |> collect)*(y |> collect)
 
 @test z_cpu ≈ (z |> collect)
 
-task_local_storage() |> empty! # This is to recompile the kernel... Just a temporary hack
