@@ -164,18 +164,5 @@ macro wgpukernel(launch, wgSize, wgCount, shmem, ex)
 			end
 		)
 	end
-	# TODO
-	# THIS IS STALE until Kernel abstractions (KA) implementation
-	# elseif @capture(ex, function fname_(fargs__) where Targs__ fbody__ end)
-	#	push!(
-	#		code.args, 
-	#		quote
-	#			kernel = function wgpuKernel(args...)
-	#				$preparePipeline($ex, args...; workgroupSize=$wgSize, workgroupCount=$wgCount)
-	#				$compute($ex, args...; workgroupSize=$wgSize, workgroupCount=$wgCount)
-	#			end
-	#			WGPUKernelContext()
-	#		end
-	#	)
 	return esc(code)
 end
