@@ -1,5 +1,4 @@
 using WGPUCompute
-using MacroTools
 
 y = WgpuArray((rand(4, 4) .-0.5) .|> Float32)
 
