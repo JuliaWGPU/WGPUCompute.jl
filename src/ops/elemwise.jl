@@ -44,21 +44,15 @@ function elwise(f::Function, a::Number, b::WgpuArray{T, N}) where {T, N}
 	return out
 end
 
-Base.:+(a::WgpuArray{T, N}, b::WgpuArray{T, N}) where {T, N} = elwise(+, a, b)
-Base.:-(a::WgpuArray{T, N}, b::WgpuArray{T, N}) where {T, N} = elwise(-, a, b)
-Base.:*(a::WgpuArray{T, N}, b::WgpuArray{T, N}) where {T, N} = elwise(*, a, b)
-Base.:/(a::WgpuArray{T, N}, b::WgpuArray{T, N}) where {T, N} = elwise(/, a, b)
-Base.:+(a::WgpuArray{T, N}, b::Number) where {T, N} = elwise(+, a, b)
-Base.:-(a::WgpuArray{T, N}, b::Number) where {T, N} = elwise(-, a, b)
-Base.:*(a::WgpuArray{T, N}, b::Number) where {T, N} = elwise(*, a, b)
-Base.:/(a::WgpuArray{T, N}, b::Number) where {T, N} = elwise(/, a, b)
-Base.:+(a::Number, b::WgpuArray{T, N}) where {T, N} = elwise(+, a, b)
-Base.:-(a::Number, b::WgpuArray{T, N}) where {T, N} = elwise(-, a, b)
-Base.:*(a::Number, b::WgpuArray{T, N}) where {T, N} = elwise(*, a, b)
-Base.:/(a::Number, b::WgpuArray{T, N}) where {T, N} = elwise(/, a, b)
-
-
-using Revise
-using WGPUCompute
-x = WgpuArray{Float32, 2}(rand(16, 16))
-
+# Base.:+(a::WgpuArray{T, N}, b::WgpuArray{T, N}) where {T, N} = elwise(+, a, b)
+# Base.:-(a::WgpuArray{T, N}, b::WgpuArray{T, N}) where {T, N} = elwise(-, a, b)
+# Base.:*(a::WgpuArray{T, N}, b::WgpuArray{T, N}) where {T, N} = elwise(*, a, b)
+# Base.:/(a::WgpuArray{T, N}, b::WgpuArray{T, N}) where {T, N} = elwise(/, a, b)
+# Base.:+(a::WgpuArray{T, N}, b::Number) where {T, N} = elwise(+, a, b)
+# Base.:-(a::WgpuArray{T, N}, b::Number) where {T, N} = elwise(-, a, b)
+# Base.:*(a::WgpuArray{T, N}, b::Number) where {T, N} = elwise(*, a, b)
+# Base.:/(a::WgpuArray{T, N}, b::Number) where {T, N} = elwise(/, a, b)
+# Base.:+(a::Number, b::WgpuArray{T, N}) where {T, N} = elwise(+, a, b)
+# Base.:-(a::Number, b::WgpuArray{T, N}) where {T, N} = elwise(-, a, b)
+# Base.:*(a::Number, b::WgpuArray{T, N}) where {T, N} = elwise(*, a, b)
+# Base.:/(a::Number, b::WgpuArray{T, N}) where {T, N} = elwise(/, a, b)

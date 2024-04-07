@@ -9,6 +9,10 @@ export WGPUKernelContext
 getSize(a::WgpuArray) = size(a)
 getSize(a::Function) = ()
 getSize(a::Number) = ()
+getSize(::typeof(+)) = ()
+getSize(::typeof(-)) = ()
+getSize(::typeof(*)) = ()
+getSize(::typeof(/)) = ()
 
 # Small hack to support TypeExpr of WGPUTranspiler. 
 # TODO think of better abstraction. 
@@ -123,7 +127,7 @@ function getFunctionBlock(func, args)
 end
 
 function deviceKernel(fname, fargs; argTypes, wgSize, wgCount, shmem)
-	kernelInstance = get!(task_local_storage(), (fname, argTypes, size.(fargs), wgSize, wgCount, shmem)) do
+	kernelInstance = get!(task_local_storage(), (fname, argTypes, getSize.(fargs), wgSize, wgCount, shmem)) do
 		WGPUDeviceKernel(
 			function wgpuKernel(args)
 				# TODO submit or not ? @async ...
@@ -160,18 +164,5 @@ macro wgpukernel(launch, wgSize, wgCount, shmem, ex)
 			end
 		)
 	end
-	# TODO
-	# THIS IS STALE until Kernel abstractions (KA) implementation
-	# elseif @capture(ex, function fname_(fargs__) where Targs__ fbody__ end)
-	#	push!(
-	#		code.args, 
-	#		quote
-	#			kernel = function wgpuKernel(args...)
-	#				$preparePipeline($ex, args...; workgroupSize=$wgSize, workgroupCount=$wgCount)
-	#				$compute($ex, args...; workgroupSize=$wgSize, workgroupCount=$wgCount)
-	#			end
-	#			WGPUKernelContext()
-	#		end
-	#	)
 	return esc(code)
 end
