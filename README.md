@@ -126,16 +126,16 @@ bArray = WgpuArray{Float32}(rand(Float32, (1024, 1024, 100)))
 
 ```
 ```
-BenchmarkTools.Trial: 403 samples with 1 evaluation.
- Range (min … max):  30.041 μs … 15.397 ms  ┊ GC (min … max): 0.00% … 0.00%
- Time  (median):     13.710 ms              ┊ GC (median):    0.00%
- Time  (mean ± σ):   12.424 ms ±  4.124 ms  ┊ GC (mean ± σ):  0.00% ± 0.00%
+BenchmarkTools.Trial: 10000 samples with 1 evaluation.
+ Range (min … max):  62.900 μs …  1.885 ms  ┊ GC (min … max): 0.00% … 0.00%
+ Time  (median):     70.100 μs              ┊ GC (median):    0.00%
+ Time  (mean ± σ):   95.964 μs ± 80.628 μs  ┊ GC (mean ± σ):  0.00% ± 0.00%
 
-  ▄                                                   ▇█
-  █▄▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▄▁▁▁▁▁▁████▇▅▆ ▆
-  30 μs        Histogram: log(frequency) by time      15.3 ms <
+   ▇█▄▃▁▁▃▃▂▂▂▂▂▂▁▂▂▁▁  ▁▂▃▂  ▁▁▂▃▃▂  ▁▂▁▂▁                   ▂
+  █████████████████████████████████████████▇▆▆▅▅▅▇█▇▆▆▇▇▇▆▅▆▆ █
+  62.9 μs      Histogram: log(frequency) by time       208 μs <
 
- Memory estimate: 3.06 KiB, allocs estimate: 96.
+ Memory estimate: 1.01 KiB, allocs estimate: 37.
  ```
 
 Basic ML kernels can be defined:
