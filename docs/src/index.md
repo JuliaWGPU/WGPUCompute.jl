@@ -4,7 +4,7 @@ CurrentModule = WGPUCompute
 
 # WGPUCompute
 
-Documentation for [WGPUCompute](https://github.com/arhik/WGPUCompute.jl).
+Documentation for [WGPUCompute](https://github.com/JuliaWGPU/WGPUCompute.jl).
 
 ```@index
 ```
