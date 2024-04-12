@@ -9,6 +9,10 @@ export WGPUKernelContext
 getSize(a::WgpuArray) = size(a)
 getSize(a::Function) = ()
 getSize(a::Number) = ()
+getSize(::typeof(+)) = ()
+getSize(::typeof(-)) = ()
+getSize(::typeof(*)) = ()
+getSize(::typeof(/)) = ()
 
 # Small hack to support TypeExpr of WGPUTranspiler. 
 # TODO think of better abstraction. 
@@ -123,7 +127,7 @@ function getFunctionBlock(func, args)
 end
 
 function deviceKernel(fname, fargs; argTypes, wgSize, wgCount, shmem)
-	kernelInstance = get!(task_local_storage(), (fname, argTypes, size.(fargs), wgSize, wgCount, shmem)) do
+	kernelInstance = get!(task_local_storage(), (fname, argTypes, getSize.(fargs), wgSize, wgCount, shmem)) do
 		WGPUDeviceKernel(
 			function wgpuKernel(args)
 				# TODO submit or not ? @async ...
