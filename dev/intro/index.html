@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>WGPUCompute · WGPUCompute.jl</title><script data-outdated-warner src="../assets/warner.js"></script><link rel="canonical" href="https://JuliaWGPU.github.io/WGPUCompute.jl/intro/"/><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.045/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.13.24/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../assets/documenter.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../">WGPUCompute.jl</a></span></div><form class="docs-search" action="../search/"><input class="docs-search-query" id="documenter-search-query" name="q" type="text" placeholder="Search docs"/></form><ul class="docs-menu"><li><a class="tocitem" href="../">Home</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><nav class="breadcrumb"><ul class="is-hidden-mobile"><li class="is-active"><a href>WGPUCompute</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>WGPUCompute</a></li></ul></nav><div class="docs-right"><a class="docs-edit-link" href="https://github.com/JuliaWGPU/WGPUCompute.jl/blob/main/docs/src/intro.md#" title="Edit on GitHub"><span class="docs-icon fab"></span><span class="docs-label is-hidden-touch">Edit on GitHub</span></a><a class="docs-settings-button fas fa-cog" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-sidebar-button fa fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a></div></header><article class="content" id="documenter-page"><h1 id="WGPUCompute"><a class="docs-heading-anchor" href="#WGPUCompute">WGPUCompute</a><a id="WGPUCompute-1"></a><a class="docs-heading-anchor-permalink" href="#WGPUCompute" title="Permalink"></a></h1><p><a href="https://JuliaWGPU.github.io/WGPUCompute.jl/stable/"><img src="https://img.shields.io/badge/docs-stable-blue.svg" alt="Stable"/></a> <a href="https://JuliaWGPU.github.io/WGPUCompute.jl/dev/"><img src="https://img.shields.io/badge/docs-dev-blue.svg" alt="Dev"/></a> <a href="https://github.com/JuliaWGPU/WGPUCompute.jl/actions/workflows/CI.yml?query=branch%3Amain"><img src="https://github.com/JuliaWGPU/WGPUCompute.jl/actions/workflows/CI.yml/badge.svg?branch=main" alt="Build Status"/></a> <a href="https://codecov.io/gh/JuliaWGPU/WGPUCompute.jl"><img src="https://codecov.io/gh/JuliaWGPU/WGPUCompute.jl/branch/main/graph/badge.svg" alt="Coverage"/></a></p><p>:warning: This repo is under heavy development.</p><p><code>WGPUCompute</code> is a <code>WGPU</code> compute shader utility library for julia. Using this library one can define compute shader kernels in regular julia. For example:</p><pre><code class="language-julia hljs">
+using BenchmarkTools 
+using WGPUCompute
+
+# Kernel definition
+function cast_kernel(x::WgpuArray{T, N}, out::WgpuArray{S, N}) where {T, S, N}
+	xdim = workgroupDims.x
+	ydim = workgroupDims.y
+	gIdx = workgroupId.x*xdim + localId.x
+	gIdy = workgroupId.y*ydim + localId.y
+	gId = xDims.x*gIdy + gIdx
+	out[gId] = S(ceil(x[gId]))
+end
+
+# wrapper function
+function cast(S::DataType, x::WgpuArray{T, N}) where {T, N}
+	y = WgpuArray{S}(undef, size(x))
+	@wgpukernel launch=true workgroupSizes=(4, 4) workgroupCount=(2, 2) shmem=() cast_kernel(x, y)
+	return y
+end
+
+x = WgpuArray{Float32}(rand(Float32, 8, 8) .- 0.5f0)
+z = cast(UInt32, x)
+</code></pre><p>In the above example single generalized kernel can be used for casting different datatypes. The type parameters <code>S</code>, <code>T</code>, &amp; <code>N</code> are inferred and replaced with their actual type information internally.</p><p>Compute kernels also support defining shared memory and can provide means to implement kernels like matmul. For example</p><pre><code class="language-julia hljs">function tiled_matmul_kernel(x::WgpuArray{T, N}, y::WgpuArray{T, N}, out::WgpuArray{T, N}) where {T, N}
+	#set out matrix to zero
+	gId = xDims.x*globalId.y + globalId.x
+	out[gId] = 0.0
+	
+	# set local variable = 0.0
+	sum = 0.0
+	
+	for tileId in 0:numWorkgroups.y
+		# copy block from x to shared memory
+		xId = workgroupId.x*workgroupDims.x + localId.x
+		yId = tileId*workgroupDims.y + localId.y
+		sId = localId.y*workgroupDims.x + localId.x
+		shmem1[sId] = x[yId*xDims.x + xId]
+		
+		# copy block from y to shared memory
+		xId = tileId*workgroupDims.x + localId.x
+		yId = workgroupId.y*workgroupDims.y + localId.y
+		shmem2[sId] = y[yId*yDims.x + xId]
+		synchronize()
+				
+		# block sums for each tid
+		for i in 0:xDims.y/numWorkgroups.y
+			sum = sum + shmem1[i*workgroupDims.x + localId.x]*shmem2[localId.y*workgroupDims.x + i]
+		end
+		synchronize()
+	end
+	
+	out[gId] = sum
+end
+
+# For now valid only for square matrices of size powers of 2 and base size 16 to keep it simple.
+function tiled_matmul_heuristics(x::WgpuArray{T, N}, y::WgpuArray{T, N}) where {T, N}
+	aSize = size(x)
+	bSize = size(y)
+	@assert last(aSize) == first(bSize)
+	outSize = (first(aSize), last(bSize))
+	@assert eltype(x) == eltype(y)
+	wgSize = (16, 16) # This can be fixed for now
+	wgCount = div.((outSize[1], outSize[2]), 16, RoundUp)
+	return (outSize, wgSize, wgCount)
+end
+
+function tiled_matmul(x::WgpuArray{T, N}, y::WgpuArray{T, N}) where {T, N}
+	(outSize, wgSize, wgCount) = tiled_matmul_heuristics(x, y)
+	out = WgpuArray{eltype(x), ndims(x)}(undef, outSize)
+	@wgpukernel(
+		launch=true,
+		workgroupSizes=wgSize,
+		workgroupCount=wgCount,
+		shmem=(:shmem1=&gt;(Float32, wgSize), :shmem2=&gt;(Float32, wgSize)),
+		tiled_matmul_kernel(x, y, out)
+	)
+	return out
+end
+
+Base.:*(x::WgpuArray{T, N}, y::WgpuArray{T, N})  where {T, N} = tiled_matmul(x, y)
+
+x = WgpuArray{Float32, 2}(rand(2048, 2048));
+y = WgpuArray{Float32, 2}(rand(2048, 2048));
+
+z = x*y
+
+z_cpu = (x |&gt; collect)*(y |&gt; collect)
+
+@test z_cpu ≈ (z |&gt; collect)
+
+
+</code></pre><p>There is limited supported for GPUArrays interface. And is currently under development to make is complete.</p><pre><code class="language-julia hljs">using WGPUCompute
+using BenchmarkTools
+
+aArray = WgpuArray{Float32}(undef, (1024, 1024, 100)) 
+bArray = WgpuArray{Float32}(rand(Float32, (1024, 1024, 100)))
+
+@benchmark copyto!(aArray, 1, bArray, 1, prod(size(aArray)))
+</code></pre><pre><code class="nohighlight hljs">BenchmarkTools.Trial: 10000 samples with 1 evaluation.
+ Range (min … max):  62.900 μs …  1.885 ms  ┊ GC (min … max): 0.00% … 0.00%
+ Time  (median):     70.100 μs              ┊ GC (median):    0.00%
+ Time  (mean ± σ):   95.964 μs ± 80.628 μs  ┊ GC (mean ± σ):  0.00% ± 0.00%
+
+   ▇█▄▃▁▁▃▃▂▂▂▂▂▂▁▂▂▁▁  ▁▂▃▂  ▁▁▂▃▃▂  ▁▂▁▂▁                   ▂
+  █████████████████████████████████████████▇▆▆▅▅▅▇█▇▆▆▇▇▇▆▅▆▆ █
+  62.9 μs      Histogram: log(frequency) by time       208 μs &lt;
+
+ Memory estimate: 1.01 KiB, allocs estimate: 37.
+ ```
+
+Basic ML kernels can be defined:
+
+A very simplified kernel example of ML primitive `relu`:
+</code></pre><p>julia using WGPUCompute</p><p>y = WgpuArray((rand(4, 4) .-0.5) .|&gt; Float32)</p><p>function relu_kernel(x::WgpuArray{T, N}, out::WgpuArray{T, N}) where {T, N} 	gId = xDims.x*globalId.y + globalId.x 	value = x[gId] 	out[gId] = max(value, 0.0) end</p><p>function relu(x::WgpuArray{T, N}) where {T, N} 	y = similar(x) 	@wgpukernel launch=true workgroupSizes=(4,4) workgroupCount=(1,1) shmem=() relu_kernel(x, y) 	return y end</p><p>relu(y)</p><pre><code class="nohighlight hljs">
+The above kernel undergoes two transformations:
+1. First the `@wgpukernel` kernel macro takes the kernel function and transforms into an custom AST and intermeditate representation. This transformation is actually carried out the work done in `WGPUTranspiler`. And this AST is again transpiled to the below format. This is very close to `WGSL` but with julia IR semantics. For more detailed explanation please browse to this [link](https://github.com/JuliaWGPU/WGPUTranspier.jl).</code></pre><p>┌ Info: begin │     @const workgroupDims = Vec3{UInt32}(0x00000004, 0x00000004, 0x00000001) │     @const xDims = Vec3{UInt32}(0x00000004, 0x00000004, 0x00000001) │     @const outDims = Vec3{UInt32}(0x00000004, 0x00000004, 0x00000001) │     @var StorageReadWrite 0 0 x::Array{Float32, 16} │     @var StorageReadWrite 0 1 out::Array{Float32, 16} │     @compute @workgroupSize(4, 4, 1) function relu<em>kernel(@builtin(global</em>invocation<em>id, globalId::Vec3{UInt32}), @builtin(local</em>invocation<em>id, localId::Vec3{UInt32}), @builtin(num</em>workgroups, numWorkgroups::Vec3{UInt32}), @builtin(workgroup_id, workgroupId::Vec3{UInt32})) │             @let gId = xDims.x * globalId.y + globalId.x │             @let value = x[gId] │             out[gId] = max(value, 0.0f0) │         end └ end</p><pre><code class="nohighlight hljs">2. Then this representation is again compiled to webgpu/WGPU&#39;s representation, `WGSL`. This is carried out an another package called `WGSLTypes`. 
+</code></pre><p>┌ Info: const workgroupDims = vec3&lt;u32&gt;(4u, 4u, 1u); │ const xDims = vec3&lt;u32&gt;(4u, 4u, 1u); │ const outDims = vec3&lt;u32&gt;(4u, 4u, 1u); │ @group(0) @binding(0) var&lt;storage, read<em>write&gt; x:array&lt;f32, 16&gt; ; │ @group(0) @binding(1) var&lt;storage, read</em>write&gt; out:array&lt;f32, 16&gt; ; │ @compute @workgroup<em>size(4, 4, 1)  │ fn relu</em>kernel(@builtin(global<em>invocation</em>id) globalId:vec3&lt;u32&gt;, @builtin(local<em>invocation</em>id) localId:vec3&lt;u32&gt;, @builtin(num<em>workgroups) numWorkgroups:vec3&lt;u32&gt;, @builtin(workgroup</em>id) workgroupId:vec3&lt;u32&gt;) {  │     let gId = xDims.x * globalId.y + globalId.x; │     let value = x[gId]; │     out[gId] = max(value, 0.0); │ } └  ```</p><p>This final shader code is compiled using <code>naga</code>, <code>WGPU-native</code>&#39;s compiler.</p><h2 id="Conventions"><a class="docs-heading-anchor" href="#Conventions">Conventions</a><a id="Conventions-1"></a><a class="docs-heading-anchor-permalink" href="#Conventions" title="Permalink"></a></h2><ol><li>Input arguments are converted into <code>storage</code> variables and placed at the top of the shader code.</li><li>Size of input arguments are converted into <code>const</code> variables and placed at the top of the shader code. Users can use these arguments to probe for input arrays&#39;s size. The corresponding name of variable declaring size of array will be  a concatenation of variable name followed by &quot;Dims&quot;. For example: if variable is <code>x</code>, <code>xDims</code> holds the size information.  </li><li>Kernel arguments like <code>workgroupDims</code> etc are also placed at the top of the shader code and can be used as an variables inside kernel code. This will eventually be probed using julia&#39;s <code>size</code> function. Until then we can use this convention.</li><li>Shared memory can be declared in the <code>@wgpukernel</code> macro using <code>shmem</code> kwarg. <code>shmem</code> expects a tuple of pairs with each pair representing name and (type, size) of shared memory. Example: <code>shmem = (&quot;xShared&quot;=&gt;(Float32, 16))</code></li></ol><h2 id="Known-issues"><a class="docs-heading-anchor" href="#Known-issues">Known issues</a><a id="Known-issues-1"></a><a class="docs-heading-anchor-permalink" href="#Known-issues" title="Permalink"></a></h2><ul><li>jupyter notebooks are not tested yet and might need some work to have compatibility with pluto as well.</li></ul><h2 id="TODO"><a class="docs-heading-anchor" href="#TODO">TODO</a><a id="TODO-1"></a><a class="docs-heading-anchor-permalink" href="#TODO" title="Permalink"></a></h2><ul><li>[ ] atomics support is under development.</li><li>[ ] possibility of JSServe the generated wgsl code in web app.</li><li>[ ] Complete SPIRV version</li><li>[ ] Explore and adhere to Binary generation eventually. </li></ul></article><nav class="docs-footer"><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 0.27.23 on <span class="colophon-date" title="Saturday 13 April 2024 09:59">Saturday 13 April 2024</span>. Using Julia version 1.10.2.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
