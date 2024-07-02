@@ -13,7 +13,8 @@ function naive_reduce_kernel(x::WgpuArray{T,N}, out::WgpuArray{T,N}) where {T,N}
     for itr in 0:steps
 	    if gId%2 == 0
     		exponent = Float32(itr)
-			stride = UInt32(pow(base, exponent))
+    		baseexp = pow(base, exponent)
+			stride = UInt32(baseexp)
 			out[gId] += out[gId + stride]
 	    end
 	end
