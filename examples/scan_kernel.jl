@@ -41,11 +41,12 @@ end
 
 function naive_prefix_scan(x::WgpuArray{T, N}) where {T, N}
 	y = similar(x)
-	wgsize = div(reduce(*, size(x)), 256)
+	maxthreads = 256
+	wgsize = div(reduce(*, size(x)), maxthreads)
 	p = WgpuArray{T, N}(zeros(wgsize))
 	@wgpukernel(
 		launch=true,
-		workgroupSizes = (256,),
+		workgroupSizes = (maxthreads,),
 		workgroupCount = (wgsize,),
 		shmem = (),
 		naive_prefix_scan_kernel(x, y, p)
@@ -54,7 +55,7 @@ function naive_prefix_scan(x::WgpuArray{T, N}) where {T, N}
 	partials = WgpuArray{T, N}(pscan)
 	@wgpukernel(
 		launch=true,
-		workgroupSizes = (256,),
+		workgroupSizes = (maxthreads,),
 		workgroupCount = (wgsize,),
 		shmem = (),
 		naive_prefix_partials_scatter_kernel(y, partials)
@@ -62,7 +63,7 @@ function naive_prefix_scan(x::WgpuArray{T, N}) where {T, N}
 	return y
 end
 
-x = WgpuArray{Float32}(rand(Float32, 2^16))
+x = WgpuArray{Float32}(rand(Float32, 2^22))
 z = naive_prefix_scan(x,)
 
 x_cpu = (x |> collect)

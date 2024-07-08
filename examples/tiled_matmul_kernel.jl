@@ -84,7 +84,10 @@ Base.:*(x::WgpuArray{T, N}, y::WgpuArray{T, N})  where {T, N} = tiled_matmul(x, 
 
 z = x*y
 
-z_cpu = (x |> collect)*(y |> collect)
+x_cpu = (x |> collect);
+y_cpu = (y |> collect);
+
+z_cpu = x_cpu*y_cpu
 
 @test z_cpu ≈ (z |> collect)
 
