@@ -7,6 +7,12 @@ using LinearAlgebra
 using GPUArrays
 using Adapt
 
+export WAtomic
+
+struct WAtomic{T}
+	el::T
+end
+
 export WgpuArray
 
 # TODO MTL tracks cmdEncoder with task local storage. Thats neat.
@@ -41,6 +47,34 @@ contents(buf::WGPUCore.GPUBuffer) = WGPUCore.mapRead(buf)
 
 # GPU -> GPU
 function Base.unsafe_copyto!(gpuDevice, dst::WgpuArrayPtr{T}, src::WgpuArrayPtr{T}, N::Integer) where T
+	cmdEncoder = WGPUCore.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
+	WGPUCore.copyBufferToBuffer(
+		cmdEncoder,
+		src.buffer,
+		src.offset |> Int,
+		dst.buffer,
+		dst.offset |> Int,
+		N*sizeof(T)
+	)
+	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(cmdEncoder),])
+end
+
+# GPU -> GPU (atomic)
+function Base.unsafe_copyto!(gpuDevice, dst::WgpuArrayPtr{WAtomic{T}}, src::WgpuArrayPtr{T}, N::Integer) where T
+	cmdEncoder = WGPUCore.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
+	WGPUCore.copyBufferToBuffer(
+		cmdEncoder,
+		src.buffer,
+		src.offset |> Int,
+		dst.buffer,
+		dst.offset |> Int,
+		N*sizeof(T)
+	)
+	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(cmdEncoder),])
+end
+
+# GPU (atomic) -> GPU
+function Base.unsafe_copyto!(gpuDevice, dst::WgpuArrayPtr{T}, src::WgpuArrayPtr{WAtomic{T}}, N::Integer) where T
 	cmdEncoder = WGPUCore.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
 	WGPUCore.copyBufferToBuffer(
 		cmdEncoder,
@@ -186,6 +220,10 @@ WgpuArray{T}(::UndefInitializer, dims::NTuple{N, Integer}) where {T, N} =
 WgpuArray{T}(::UndefInitializer, dims::Vararg{Integer, N}) where {T, N} = 
 	WgpuArray{T, N}(undef, convert(Tuple{Vararg{Int}}, dims))
 
+# atomic array support
+# WgpuArray{T}(::UndefInitializer, dims::NTuple{N, Integer}) where {T, N} =
+	# WgpuArray{T, N}(undef, convert(Tuple{Vararg{Int}}, dims))
+
 # empty vector constructors
 WgpuArray{T, 1}() where {T} = WgpuArray{T, 1}(undef, 0)
 
@@ -322,10 +360,68 @@ function Base.copyto!(dest::WgpuArray{T}, doffs::Integer, src::WgpuArray{T}, sof
   return dest
 end
 
+function Base.copyto!(dest::WgpuArray{WAtomic{T}}, doffs::Integer, src::WgpuArray{T}, soffs::Integer,
+                      n::Integer) where T
+  (n==0 || sizeof(T) == 0) && return dest
+  @boundscheck checkbounds(dest, doffs)
+  @boundscheck checkbounds(dest, doffs+n-1)
+  @boundscheck checkbounds(src, soffs)
+  @boundscheck checkbounds(src, soffs+n-1)
+  # TODO: which device to use here?
+  if device(dest) == device(src)
+    unsafe_copyto!(device(dest), dest, doffs, src, soffs, n)
+  else
+    error("Copy between different devices not implemented")
+  end
+  return dest
+end
+
+function Base.copyto!(dest::WgpuArray{T}, doffs::Integer, src::WgpuArray{WAtomic{T}}, soffs::Integer,
+                      n::Integer) where T
+  (n==0 || sizeof(T) == 0) && return dest
+  @boundscheck checkbounds(dest, doffs)
+  @boundscheck checkbounds(dest, doffs+n-1)
+  @boundscheck checkbounds(src, soffs)
+  @boundscheck checkbounds(src, soffs+n-1)
+  # TODO: which device to use here?
+  if device(dest) == device(src)
+    unsafe_copyto!(device(dest), dest, doffs, src, soffs, n)
+  else
+    error("Copy between different devices not implemented")
+  end
+  return dest
+end
+
 Base.copyto!(dest::WgpuArray{T}, src::WgpuArray{T}) where {T} =
     copyto!(dest, 1, src, 1, length(src))
 
 function Base.unsafe_copyto!(dev, dest::WgpuArray{T}, doffs, src::Array{T}, soffs, n) where T
+  # these copies are implemented using pure memcpys, not API calls, so arent ordered.
+  # synchronize()
+
+  GC.@preserve src dest unsafe_copyto!(dev, pointer(dest, doffs), pointer(src, soffs), n)
+  if Base.isbitsunion(T)
+    # copy selector bytes
+    error("Not implemented")
+  end
+  return dest
+end
+
+# copy WgpuArray{T} -> WgpuArray{Atomic{T}}
+function Base.unsafe_copyto!(dev, dest::WgpuArray{WAtomic{T}}, doffs, src::WgpuArray{T}, soffs, n) where T
+  # these copies are implemented using pure memcpys, not API calls, so arent ordered.
+  # synchronize()
+
+  GC.@preserve src dest unsafe_copyto!(dev, pointer(dest, doffs), pointer(src, soffs), n)
+  if Base.isbitsunion(T)
+    # copy selector bytes
+    error("Not implemented")
+  end
+  return dest
+end
+
+# copy WgpuArray{WAtomic{T}} -> WgpuArray{T}
+function Base.unsafe_copyto!(dev, dest::WgpuArray{T}, doffs, src::WgpuArray{WAtomic{T}}, soffs, n) where T
   # these copies are implemented using pure memcpys, not API calls, so arent ordered.
   # synchronize()
 
