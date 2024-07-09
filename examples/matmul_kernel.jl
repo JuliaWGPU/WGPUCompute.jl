@@ -46,4 +46,4 @@ out = matmul(x, y)
 
 xcpu*ycpu
 
-@test (xcpu*ycpu) ≈= (out |> collect)
+@test (xcpu*ycpu) ≈ (out |> collect)
