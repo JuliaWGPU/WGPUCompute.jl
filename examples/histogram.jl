@@ -34,5 +34,9 @@ hist = WgpuArray{UInt32}(zeros(UInt32, 10))
 
 z = histogram(x, hist)
 
+hist_cpu = zeros(UInt32, nbins)
+for i in (x |> collect)
+	hist_cpu[i%nbins + 1] += 1
+end
 
-
+@test hist_cpu ≈ hist |> collect
