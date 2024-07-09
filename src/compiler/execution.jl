@@ -14,10 +14,14 @@ getSize(::typeof(-)) = ()
 getSize(::typeof(*)) = ()
 getSize(::typeof(/)) = ()
 
-# Small hack to support TypeExpr of WGPUTranspiler. 
-# TODO think of better abstraction. 
+# Small hack to support TypeExpr of WGPUTranspiler.
+# TODO think of better abstraction.
 function WGPUTranspiler.typeInfer(scope::Scope, tExpr::TypeExpr, v::Val{:WgpuArray})
 	return WgpuArray{map(x -> WGPUTranspiler.typeInfer(scope, x), tExpr.types)...}
+end
+
+function WGPUTranspiler.typeInfer(scope::Scope, tExpr::TypeExpr, v::Val{:WAtomic})
+    return WAtomic{map(x -> WGPUTranspiler.typeInfer(scope, x), tExpr.types)...}
 end
 
 export @wgpukernel, getShaderCode, WGPUKernelObject, wgpuCall
@@ -66,11 +70,11 @@ end
 
 
 function compute(f::Function, args; workgroupSize=(), workgroupCount=(), shmem=())
-	cShader = get!(task_local_storage(), 
+	cShader = get!(task_local_storage(),
 			(f, :shader, eltype.(args), getSize.(args), workgroupSize, workgroupCount, shmem)) do
-				compileShader(f, args; 
-					workgroupSize=workgroupSize, 
-					workgroupCount=workgroupCount, 
+				compileShader(f, args;
+					workgroupSize=workgroupSize,
+					workgroupCount=workgroupCount,
 					shmem=shmem
 				)
 			end
@@ -82,7 +86,7 @@ function compute(f::Function, args; workgroupSize=(), workgroupCount=(), shmem=(
 	for (_, arg) in enumerate(args)
 		if typeof(arg) <: WgpuArray
 			bindingCount += 1
-			push!(bindingLayouts, 
+			push!(bindingLayouts,
 				WGPUCore.WGPUBufferEntry => [
 					:binding => bindingCount - 1,
 					:visibility => "Compute",
@@ -97,7 +101,7 @@ function compute(f::Function, args; workgroupSize=(), workgroupCount=(), shmem=(
 	for (_, arg) in enumerate(args)
 		if typeof(arg) <: WgpuArray
 			bindingCount += 1
-			push!(bindings, 
+			push!(bindings,
 				WGPUCore.GPUBuffer => [
 					:binding => bindingCount - 1,
 					:buffer => arg.storageBuffer,
@@ -149,11 +153,11 @@ macro wgpukernel(launch, wgSize, wgCount, shmem, ex)
 				$kernel_args = ($(var_exprs...),)
 				$kernel_tt = Tuple{map(Core.Typeof, $kernel_args)...}
 				$kernel = $deviceKernel(
-						$fname, 
+						$fname,
 						$kernel_args;
-						argTypes=$kernel_tt, 
-						wgSize=$wgSize, 
-						wgCount=$wgCount, 
+						argTypes=$kernel_tt,
+						wgSize=$wgSize,
+						wgCount=$wgCount,
 						shmem=$shmem,
 					)
 				if $launch == true

@@ -7,13 +7,15 @@ using LinearAlgebra
 using GPUArrays
 using Adapt
 
-export WAtomic
+export WAtomic, WgpuArray
 
 struct WAtomic{T}
 	el::T
 end
 
-export WgpuArray
+Base.eltype(::WAtomic{T}) where T = T
+Base.eltype(::Type{WAtomic{T}}) where T = T
+
 
 # TODO MTL tracks cmdEncoder with task local storage. Thats neat.
 
@@ -105,8 +107,42 @@ function Base.unsafe_copyto!(gpuDevice, dst::Ptr{T}, src::WgpuArrayPtr{T}, N::In
 	WGPUCore.destroy(tmpBuffer)
 end
 
+function Base.unsafe_copyto!(gpuDevice, dst::Ptr{T}, src::WgpuArrayPtr{WAtomic{T}}, N::Integer) where T
+	cmdEncoder = WGPUCore.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
+	# TODO we could simply readBuffer from WGPUCore.jl ?
+	tmpBuffer = WGPUCore.createBuffer(
+		" READ BUFFER TEMP ",
+		gpuDevice,
+		sizeof(T)*N,
+		["CopyDst", "MapRead"],
+		false
+	)
+	tmpWgpuArrayPtr = WgpuArrayPtr{T}(tmpBuffer, 0)
+	Base.unsafe_copyto!(gpuDevice, tmpWgpuArrayPtr, src, N)
+	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(cmdEncoder),])
+	unsafe_copyto!(dst, contents(tmpWgpuArrayPtr), N)
+	WGPUCore.destroy(tmpBuffer)
+end
+
 # CPU -> GPU
 function Base.unsafe_copyto!(gpuDevice, dst::WgpuArrayPtr{T}, src::Ptr{T}, N::Integer) where T
+	cmdEncoder = WGPUCore.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
+	# TODO we could simply readBuffer from WGPUCore.jl ?
+	# tmpBuffer = WGPUCore.createBuffer(
+		# " READ BUFFER TEMP ",
+		# gpuDevice,
+		# N*sizeof(T),
+		# ["CopyDst", "MapRead"],
+		# false
+	# )
+	# Base.unsafe_copyto!(gpuDevice, tmpBuffer, src.buffer, N)
+	# WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(cmdEncoder),])
+	# unsafe_copy!(dst, WGPUCore.mapRead(tmpBuffer))
+	WGPUCore.writeBuffer(gpuDevice.queue, dst.buffer, src)
+end
+
+# CPU -> GPU (atomic)
+function Base.unsafe_copyto!(gpuDevice, dst::WgpuArrayPtr{WAtomic{T}}, src::Ptr{T}, N::Integer) where T
 	cmdEncoder = WGPUCore.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
 	# TODO we could simply readBuffer from WGPUCore.jl ?
 	# tmpBuffer = WGPUCore.createBuffer(
@@ -151,11 +187,11 @@ mutable struct WgpuArray{T, N} <: AbstractGPUArray{T, N}
 		bindGroup = nothing
 		computePipeline = nothing
 		obj = new{T, length(size(data))}(
-			Dims(size(data)), 
+			Dims(size(data)),
 			storageData,
 			length(storageData)*sizeof(T),
 			0,
-			storageBuffer, 
+			storageBuffer,
 			bindGroup, 		# TODO remove this coupling
 			computePipeline # TODO remove this coupling
 		)
@@ -163,7 +199,7 @@ mutable struct WgpuArray{T, N} <: AbstractGPUArray{T, N}
 			obj = nothing
 		end
 	end
-	
+
 	function WgpuArray{T, N}(::UndefInitializer, dims::Dims{N}) where {T, N}
 		Base.allocatedinline(T) || error("WgpuArray only supports element types that are stored inline ")
 		maxSize = prod(dims) * sizeof(T)
@@ -200,24 +236,26 @@ mutable struct WgpuArray{T, N} <: AbstractGPUArray{T, N}
 		end
 		return obj
 	end
-	
+
 end
 
 Base.eltype(::Type{WgpuArray{T}}) where T = T
 Base.eltype(::Type{WgpuArray{T, N}}) where {T, N} = T
+Base.eltype(::Type{WgpuArray{WAtomic{T}, N}}) where {T, N} = T
+Base.eltype(::Type{WgpuArray{WAtomic{T}}}) where T = T
 
 # constructors (borrowed from CUDA.jl for quick prototyping)
-WgpuArray{T, N}(::UndefInitializer, dims::Integer...) where {T, N} = 
+WgpuArray{T, N}(::UndefInitializer, dims::Integer...) where {T, N} =
 	WgpuArray{T, N}(undef, Dims(dims))
-WgpuArray{T, N}(::UndefInitializer, dims::NTuple{N, Integer}) where {T, N} = 
+WgpuArray{T, N}(::UndefInitializer, dims::NTuple{N, Integer}) where {T, N} =
 	WgpuArray{T, N}(undef, convert(Tuple{Vararg{Int}}, dims))
 WgpuArray{T, N}(::UndefInitializer, dims::Vararg{Integer, N}) where {T, N} =
 	WgpuArray{T, N}(undef, convert(Tuple{Vararg{Int}}, dims))
 
-# type but not dimensionality specified 
-WgpuArray{T}(::UndefInitializer, dims::NTuple{N, Integer}) where {T, N} = 
+# type but not dimensionality specified
+WgpuArray{T}(::UndefInitializer, dims::NTuple{N, Integer}) where {T, N} =
 	WgpuArray{T, N}(undef, convert(Tuple{Vararg{Int}}, dims))
-WgpuArray{T}(::UndefInitializer, dims::Vararg{Integer, N}) where {T, N} = 
+WgpuArray{T}(::UndefInitializer, dims::Vararg{Integer, N}) where {T, N} =
 	WgpuArray{T, N}(undef, convert(Tuple{Vararg{Int}}, dims))
 
 # atomic array support
