@@ -163,7 +163,6 @@ function unsafe_fill!(gpuDevice, dst::WgpuArrayPtr{T}, value::Union{UInt8, Int8}
 	WGPUCore.writeBuffer(gpuDevice.queue, dst.buffer, fill(value, N))
 end
 
-
 mutable struct WgpuArray{T, N} <: AbstractGPUArray{T, N}
 	dims::Dims{N}
 	storageData::Union{Nothing, Vector{T}, Array{T}}

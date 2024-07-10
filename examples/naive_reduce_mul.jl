@@ -37,7 +37,7 @@ z = naive_reduce(x, *)
 
 x_cpu = (x |> collect)
 
-sum_cpu = reduce(*, x_cpu)
-sum_gpu = (z|>collect)[1]
+mul_cpu = reduce(*, x_cpu)
+mul_gpu = (z|>collect)[1]
 
-@test sum_cpu ≈ sum_gpu
+@test mul_cpu ≈ mul_gpu
