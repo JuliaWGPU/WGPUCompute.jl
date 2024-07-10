@@ -10,6 +10,11 @@ function cast_kernel(x::WgpuArray{T, N}, out::WgpuArray{S, N}) where {T, S, N}
 	out[gId] = S(ceil(x[gId]))
 end
 
+function cast_kernel(x::WgpuArray{T, N}, out::WgpuArray{S, N}) where {T, S, N}
+	gId = xDims.x*globalId.y + globalId.x
+	out[gId] = S(ceil(x[gId]))
+end
+
 function cast(S::DataType, x::WgpuArray{T, N}) where {T, N}
 	y = WgpuArray{S}(undef, size(x))
 	@wgpukernel launch=true workgroupSizes=(4, 4) workgroupCount=(2, 2) shmem=() cast_kernel(x, y)
