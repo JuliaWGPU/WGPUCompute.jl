@@ -21,9 +21,6 @@ const Mat3{T} = SMatrix{3, 3, T, 9}
 const Mat4{T} = SMatrix{4, 4, T, 16}
 const Vec{N, T} = SVector{N, T}
 
-b =  WgpuArray{Float32, 2}(undef, (2048, 2048));
-@b WgpuArray{Float32, 2}(undef, (1024, 1024))
-
 x = WgpuArray{Float32, 2}(rand(2048, 2048));
 y = WgpuArray{Float32, 2}(rand(2048, 2048));
 
@@ -87,7 +84,10 @@ Base.:*(x::WgpuArray{T, N}, y::WgpuArray{T, N})  where {T, N} = tiled_matmul(x, 
 
 z = x*y
 
-z_cpu = (x |> collect)*(y |> collect)
+x_cpu = (x |> collect);
+y_cpu = (y |> collect);
+
+z_cpu = x_cpu*y_cpu
 
 @test z_cpu ≈ (z |> collect)
 

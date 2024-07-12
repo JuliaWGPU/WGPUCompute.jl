@@ -7,7 +7,15 @@ using LinearAlgebra
 using GPUArrays
 using Adapt
 
-export WgpuArray
+export WAtomic, WgpuArray
+
+struct WAtomic{T}
+	el::T
+end
+
+Base.eltype(::WAtomic{T}) where T = T
+Base.eltype(::Type{WAtomic{T}}) where T = T
+
 
 # TODO MTL tracks cmdEncoder with task local storage. Thats neat.
 
@@ -53,6 +61,34 @@ function Base.unsafe_copyto!(gpuDevice, dst::WgpuArrayPtr{T}, src::WgpuArrayPtr{
 	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(cmdEncoder),])
 end
 
+# GPU -> GPU (atomic)
+function Base.unsafe_copyto!(gpuDevice, dst::WgpuArrayPtr{WAtomic{T}}, src::WgpuArrayPtr{T}, N::Integer) where T
+	cmdEncoder = WGPUCore.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
+	WGPUCore.copyBufferToBuffer(
+		cmdEncoder,
+		src.buffer,
+		src.offset |> Int,
+		dst.buffer,
+		dst.offset |> Int,
+		N*sizeof(T)
+	)
+	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(cmdEncoder),])
+end
+
+# GPU (atomic) -> GPU
+function Base.unsafe_copyto!(gpuDevice, dst::WgpuArrayPtr{T}, src::WgpuArrayPtr{WAtomic{T}}, N::Integer) where T
+	cmdEncoder = WGPUCore.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
+	WGPUCore.copyBufferToBuffer(
+		cmdEncoder,
+		src.buffer,
+		src.offset |> Int,
+		dst.buffer,
+		dst.offset |> Int,
+		N*sizeof(T)
+	)
+	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(cmdEncoder),])
+end
+
 # GPU -> CPU
 function Base.unsafe_copyto!(gpuDevice, dst::Ptr{T}, src::WgpuArrayPtr{T}, N::Integer) where T
 	cmdEncoder = WGPUCore.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
@@ -71,8 +107,42 @@ function Base.unsafe_copyto!(gpuDevice, dst::Ptr{T}, src::WgpuArrayPtr{T}, N::In
 	WGPUCore.destroy(tmpBuffer)
 end
 
+function Base.unsafe_copyto!(gpuDevice, dst::Ptr{T}, src::WgpuArrayPtr{WAtomic{T}}, N::Integer) where T
+	cmdEncoder = WGPUCore.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
+	# TODO we could simply readBuffer from WGPUCore.jl ?
+	tmpBuffer = WGPUCore.createBuffer(
+		" READ BUFFER TEMP ",
+		gpuDevice,
+		sizeof(T)*N,
+		["CopyDst", "MapRead"],
+		false
+	)
+	tmpWgpuArrayPtr = WgpuArrayPtr{T}(tmpBuffer, 0)
+	Base.unsafe_copyto!(gpuDevice, tmpWgpuArrayPtr, src, N)
+	WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(cmdEncoder),])
+	unsafe_copyto!(dst, contents(tmpWgpuArrayPtr), N)
+	WGPUCore.destroy(tmpBuffer)
+end
+
 # CPU -> GPU
 function Base.unsafe_copyto!(gpuDevice, dst::WgpuArrayPtr{T}, src::Ptr{T}, N::Integer) where T
+	cmdEncoder = WGPUCore.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
+	# TODO we could simply readBuffer from WGPUCore.jl ?
+	# tmpBuffer = WGPUCore.createBuffer(
+		# " READ BUFFER TEMP ",
+		# gpuDevice,
+		# N*sizeof(T),
+		# ["CopyDst", "MapRead"],
+		# false
+	# )
+	# Base.unsafe_copyto!(gpuDevice, tmpBuffer, src.buffer, N)
+	# WGPUCore.submit(gpuDevice.queue, [WGPUCore.finish(cmdEncoder),])
+	# unsafe_copy!(dst, WGPUCore.mapRead(tmpBuffer))
+	WGPUCore.writeBuffer(gpuDevice.queue, dst.buffer, src)
+end
+
+# CPU -> GPU (atomic)
+function Base.unsafe_copyto!(gpuDevice, dst::WgpuArrayPtr{WAtomic{T}}, src::Ptr{T}, N::Integer) where T
 	cmdEncoder = WGPUCore.createCommandEncoder(gpuDevice, "COMMAND ENCODER")
 	# TODO we could simply readBuffer from WGPUCore.jl ?
 	# tmpBuffer = WGPUCore.createBuffer(
@@ -117,11 +187,11 @@ mutable struct WgpuArray{T, N} <: AbstractGPUArray{T, N}
 		bindGroup = nothing
 		computePipeline = nothing
 		obj = new{T, length(size(data))}(
-			Dims(size(data)), 
+			Dims(size(data)),
 			storageData,
 			length(storageData)*sizeof(T),
 			0,
-			storageBuffer, 
+			storageBuffer,
 			bindGroup, 		# TODO remove this coupling
 			computePipeline # TODO remove this coupling
 		)
@@ -129,7 +199,7 @@ mutable struct WgpuArray{T, N} <: AbstractGPUArray{T, N}
 			obj = nothing
 		end
 	end
-	
+
 	function WgpuArray{T, N}(::UndefInitializer, dims::Dims{N}) where {T, N}
 		Base.allocatedinline(T) || error("WgpuArray only supports element types that are stored inline ")
 		maxSize = prod(dims) * sizeof(T)
@@ -166,25 +236,31 @@ mutable struct WgpuArray{T, N} <: AbstractGPUArray{T, N}
 		end
 		return obj
 	end
-	
+
 end
 
 Base.eltype(::Type{WgpuArray{T}}) where T = T
 Base.eltype(::Type{WgpuArray{T, N}}) where {T, N} = T
+Base.eltype(::Type{WgpuArray{WAtomic{T}, N}}) where {T, N} = T
+Base.eltype(::Type{WgpuArray{WAtomic{T}}}) where T = T
 
 # constructors (borrowed from CUDA.jl for quick prototyping)
-WgpuArray{T, N}(::UndefInitializer, dims::Integer...) where {T, N} = 
+WgpuArray{T, N}(::UndefInitializer, dims::Integer...) where {T, N} =
 	WgpuArray{T, N}(undef, Dims(dims))
-WgpuArray{T, N}(::UndefInitializer, dims::NTuple{N, Integer}) where {T, N} = 
+WgpuArray{T, N}(::UndefInitializer, dims::NTuple{N, Integer}) where {T, N} =
 	WgpuArray{T, N}(undef, convert(Tuple{Vararg{Int}}, dims))
 WgpuArray{T, N}(::UndefInitializer, dims::Vararg{Integer, N}) where {T, N} =
 	WgpuArray{T, N}(undef, convert(Tuple{Vararg{Int}}, dims))
 
-# type but not dimensionality specified 
-WgpuArray{T}(::UndefInitializer, dims::NTuple{N, Integer}) where {T, N} = 
+# type but not dimensionality specified
+WgpuArray{T}(::UndefInitializer, dims::NTuple{N, Integer}) where {T, N} =
 	WgpuArray{T, N}(undef, convert(Tuple{Vararg{Int}}, dims))
-WgpuArray{T}(::UndefInitializer, dims::Vararg{Integer, N}) where {T, N} = 
+WgpuArray{T}(::UndefInitializer, dims::Vararg{Integer, N}) where {T, N} =
 	WgpuArray{T, N}(undef, convert(Tuple{Vararg{Int}}, dims))
+
+# atomic array support
+# WgpuArray{T}(::UndefInitializer, dims::NTuple{N, Integer}) where {T, N} =
+	# WgpuArray{T, N}(undef, convert(Tuple{Vararg{Int}}, dims))
 
 # empty vector constructors
 WgpuArray{T, 1}() where {T} = WgpuArray{T, 1}(undef, 0)
@@ -322,10 +398,68 @@ function Base.copyto!(dest::WgpuArray{T}, doffs::Integer, src::WgpuArray{T}, sof
   return dest
 end
 
+function Base.copyto!(dest::WgpuArray{WAtomic{T}}, doffs::Integer, src::WgpuArray{T}, soffs::Integer,
+                      n::Integer) where T
+  (n==0 || sizeof(T) == 0) && return dest
+  @boundscheck checkbounds(dest, doffs)
+  @boundscheck checkbounds(dest, doffs+n-1)
+  @boundscheck checkbounds(src, soffs)
+  @boundscheck checkbounds(src, soffs+n-1)
+  # TODO: which device to use here?
+  if device(dest) == device(src)
+    unsafe_copyto!(device(dest), dest, doffs, src, soffs, n)
+  else
+    error("Copy between different devices not implemented")
+  end
+  return dest
+end
+
+function Base.copyto!(dest::WgpuArray{T}, doffs::Integer, src::WgpuArray{WAtomic{T}}, soffs::Integer,
+                      n::Integer) where T
+  (n==0 || sizeof(T) == 0) && return dest
+  @boundscheck checkbounds(dest, doffs)
+  @boundscheck checkbounds(dest, doffs+n-1)
+  @boundscheck checkbounds(src, soffs)
+  @boundscheck checkbounds(src, soffs+n-1)
+  # TODO: which device to use here?
+  if device(dest) == device(src)
+    unsafe_copyto!(device(dest), dest, doffs, src, soffs, n)
+  else
+    error("Copy between different devices not implemented")
+  end
+  return dest
+end
+
 Base.copyto!(dest::WgpuArray{T}, src::WgpuArray{T}) where {T} =
     copyto!(dest, 1, src, 1, length(src))
 
 function Base.unsafe_copyto!(dev, dest::WgpuArray{T}, doffs, src::Array{T}, soffs, n) where T
+  # these copies are implemented using pure memcpys, not API calls, so arent ordered.
+  # synchronize()
+
+  GC.@preserve src dest unsafe_copyto!(dev, pointer(dest, doffs), pointer(src, soffs), n)
+  if Base.isbitsunion(T)
+    # copy selector bytes
+    error("Not implemented")
+  end
+  return dest
+end
+
+# copy WgpuArray{T} -> WgpuArray{Atomic{T}}
+function Base.unsafe_copyto!(dev, dest::WgpuArray{WAtomic{T}}, doffs, src::WgpuArray{T}, soffs, n) where T
+  # these copies are implemented using pure memcpys, not API calls, so arent ordered.
+  # synchronize()
+
+  GC.@preserve src dest unsafe_copyto!(dev, pointer(dest, doffs), pointer(src, soffs), n)
+  if Base.isbitsunion(T)
+    # copy selector bytes
+    error("Not implemented")
+  end
+  return dest
+end
+
+# copy WgpuArray{WAtomic{T}} -> WgpuArray{T}
+function Base.unsafe_copyto!(dev, dest::WgpuArray{T}, doffs, src::WgpuArray{WAtomic{T}}, soffs, n) where T
   # these copies are implemented using pure memcpys, not API calls, so arent ordered.
   # synchronize()
 
